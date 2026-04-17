@@ -1,0 +1,153 @@
+{
+  "project_name": "Cloud Kinetics SA Intern Assignment - Agentic Conversational System",
+  "last_updated": "2026-04-17",
+  "timezone": "Asia/Ho_Chi_Minh",
+  "status_summary": {
+    "current_phase": "Phase 0 - Project Setup",
+    "current_focus": "Local scaffolding is stable, and pytest import-path compatibility has been fixed for direct local execution",
+    "overall_state": "Phase 0 implementation is in place, smoke tests pass, and the local test runner configuration is stabilized"
+  },
+  "approved_baseline": {
+    "frontend": "Streamlit",
+    "api_entry": "Amazon API Gateway",
+    "orchestrator": "AWS Lambda",
+    "rag": "Amazon Bedrock Knowledge Bases",
+    "document_store": "Amazon S3",
+    "vector_store": "S3 Vectors",
+    "order_tool": "AWS Lambda mock order status service",
+    "memory": "DynamoDB",
+    "observability": [
+      "CloudWatch Logs",
+      "CloudWatch Metrics",
+      "X-Ray optional"
+    ],
+    "iac": [
+      "Terraform",
+      "AWS CDK"
+    ],
+    "cicd": "GitHub Actions"
+  },
+  "overall_progress": {
+    "architecture_direction_finalized": true,
+    "technical_design_document_created": true,
+    "ai_handoff_context_pack_created": true,
+    "implementation_plan_created": true,
+    "repo_implementation_started": true,
+    "level_100_completed": false,
+    "level_300_mvp_completed": false,
+    "level_200_mvp_completed": false,
+    "demo_recording_completed": false,
+    "final_submission_packaged": false
+  },
+  "phases": {
+    "phase_0_project_setup": {
+      "status": "in_progress",
+      "tasks": {
+        "create_repository_structure": true,
+        "add_readme_skeleton": true,
+        "create_frontend_skeleton": true,
+        "create_backend_skeleton": true,
+        "add_env_template": true,
+        "choose_aws_region": true,
+        "confirm_bedrock_access_credentials": false
+      },
+      "exit_criteria_met": false
+    },
+    "phase_1_level_100_core": {
+      "status": "not_started",
+      "tasks": {
+        "create_streamlit_chat_interface": false,
+        "render_chat_history": false,
+        "connect_ui_to_backend": false,
+        "create_chat_api_contract": false,
+        "add_request_response_models": false,
+        "implement_orchestration_flow": false,
+        "implement_rule_based_classifier": false,
+        "route_order_status_requests": false,
+        "route_knowledge_qa_requests": false,
+        "create_s3_document_bucket": false,
+        "upload_sample_documents": false,
+        "create_bedrock_knowledge_base": false,
+        "connect_s3_data_source": false,
+        "trigger_ingestion_sync": false,
+        "implement_backend_kb_query_call": false,
+        "return_grounded_answer": false,
+        "define_workflow_state_model": false,
+        "collect_full_name": false,
+        "collect_dob": false,
+        "collect_ssn_last4": false,
+        "validate_required_fields": false,
+        "call_mock_order_tool_after_validation": false,
+        "return_shipment_result": false,
+        "persist_session_state": false,
+        "persist_verification_fields": false,
+        "persist_chat_messages": false,
+        "load_previous_state_next_turn": false
+      },
+      "exit_criteria_met": false
+    },
+    "phase_2_level_300_mvp": {
+      "status": "not_started",
+      "tasks": {
+        "implement_conversation_session_table": false,
+        "implement_conversation_message_table": false,
+        "add_ttl_strategy": false,
+        "load_session_before_orchestration": false,
+        "update_session_after_each_turn": false,
+        "store_messages": false,
+        "store_tool_execution_summary": false,
+        "add_structured_logs": false,
+        "mask_pii_in_logs": false,
+        "add_latency_logging": false,
+        "add_intent_distribution_metrics": false,
+        "add_workflow_success_failure_logging": false,
+        "add_kb_success_failure_logging": false
+      },
+      "exit_criteria_met": false
+    },
+    "phase_3_level_200_mvp": {
+      "status": "not_started",
+      "tasks": {
+        "create_iac_skeleton": false,
+        "define_lambda_resources": false,
+        "define_api_gateway_resources": false,
+        "define_dynamodb_resources": false,
+        "define_s3_resources": false,
+        "deploy_backend_to_aws": false,
+        "verify_live_api_endpoint": false,
+        "connect_frontend_to_cloud_backend": false,
+        "add_github_actions_workflow": false,
+        "add_lint_test_step": false,
+        "add_package_deploy_step_if_feasible": false,
+        "add_streaming_if_time_permits": false
+      },
+      "exit_criteria_met": false
+    },
+    "phase_4_polish_submission": {
+      "status": "not_started",
+      "tasks": {
+        "finalize_readme": false,
+        "add_architecture_screenshots": false,
+        "add_setup_run_instructions": false,
+        "record_demo": false,
+        "validate_links_and_documents": false,
+        "package_final_submission": false
+      },
+      "exit_criteria_met": false
+    }
+  },
+  "blockers_or_unknowns": [
+    "AWS credentials and Bedrock access not yet confirmed",
+    "GitHub repository path not yet recorded"
+  ],
+  "next_three_tasks": [
+    "Manually run local backend and Streamlit UI together to capture end-to-end placeholder evidence",
+    "Implement Phase 1 rule-based classifier and expand orchestrator routing behavior",
+    "Prepare sample documents and Bedrock Knowledge Base integration scaffolding"
+  ],
+  "update_instructions": [
+    "Update this file together with PROGRESS_TRACKER.md after meaningful progress",
+    "Do not mark a phase complete unless its exit criteria are actually met",
+    "Continue only unfinished tasks unless the user explicitly changes scope"
+  ]
+}

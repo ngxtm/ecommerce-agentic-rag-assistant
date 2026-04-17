@@ -1,0 +1,139 @@
+{
+  "project_name": "Cloud Kinetics SA Intern Assignment - Agentic Conversational System",
+  "goal": "Implement a small-scale AWS-based agentic conversational system for assignment submission.",
+  "constraints": {
+    "priority": [
+      "fast delivery",
+      "low cloud cost",
+      "clean architecture",
+      "interview-defensible design"
+    ],
+    "avoid_scope_creep": true,
+    "deadline_pressure": true
+  },
+  "assignment_requirements": {
+    "level_100": [
+      "RAG over internal documents",
+      "order shipment workflow",
+      "collect full name, DOB, last 4 SSN before order lookup",
+      "multi-turn conversation",
+      "session-level memory"
+    ],
+    "level_200": [
+      "AWS cloud deployment",
+      "IaC preferred",
+      "streaming recommended",
+      "simple CI/CD"
+    ],
+    "level_300": [
+      "conversation data model",
+      "integration of stored conversation data into runtime",
+      "observability design"
+    ],
+    "optional": [
+      "request classification pipeline",
+      "data preprocessing pipeline"
+    ]
+  },
+  "agreed_architecture": {
+    "frontend": "Streamlit",
+    "api_entry": "Amazon API Gateway",
+    "orchestrator": "AWS Lambda",
+    "rag": "Amazon Bedrock Knowledge Bases",
+    "document_store": "Amazon S3",
+    "vector_store": "S3 Vectors",
+    "order_tool": "AWS Lambda mock order status service",
+    "memory": "DynamoDB",
+    "observability": [
+      "CloudWatch Logs",
+      "CloudWatch Metrics",
+      "X-Ray optional"
+    ],
+    "iac": [
+      "Terraform",
+      "AWS CDK"
+    ],
+    "cicd": "GitHub Actions"
+  },
+  "non_goals": [
+    "Do not redesign the stack from scratch",
+    "Do not use OpenSearch Serverless for MVP unless forced",
+    "Do not overbuild UI",
+    "Do not build a complex multi-agent system",
+    "Do not prioritize optional preprocessing over core requirements"
+  ],
+  "workflow_rules": {
+    "intent_categories": [
+      "KNOWLEDGE_QA",
+      "ORDER_STATUS",
+      "FALLBACK"
+    ],
+    "classifier_strategy": "Rule-based first",
+    "order_validation": {
+      "full_name": "required, non-empty",
+      "dob": "required, valid date format",
+      "ssn_last4": "required, exactly 4 digits"
+    },
+    "tool_call_policy": "Do not call order lookup until all required fields are collected and validated"
+  },
+  "data_model": {
+    "conversation_session": [
+      "session_id",
+      "created_at",
+      "updated_at",
+      "current_intent",
+      "verification_state",
+      "collected_full_name",
+      "collected_dob",
+      "collected_ssn_last4",
+      "verified_customer_ref",
+      "ttl"
+    ],
+    "conversation_message": [
+      "session_id",
+      "message_ts",
+      "role",
+      "message_text",
+      "tool_name",
+      "tool_result_summary",
+      "retrieval_refs",
+      "contains_pii",
+      "ttl"
+    ]
+  },
+  "observability": {
+    "capture": [
+      "request_count",
+      "intent_distribution",
+      "rag_success_failure",
+      "retrieval_latency",
+      "order_workflow_success_failure",
+      "verification_failures",
+      "fallback_count",
+      "response_latency"
+    ],
+    "logging_rules": [
+      "Never log raw SSN",
+      "Avoid logging raw DOB",
+      "Mask sensitive values"
+    ]
+  },
+  "implementation_order": [
+    "Phase 0: Project skeleton",
+    "Phase 1: Level 100 core features",
+    "Phase 2: Level 300 minimum viable coverage",
+    "Phase 3: Level 200 minimum viable deployment",
+    "Phase 4: Polish and demo prep"
+  ],
+  "definition_of_done": [
+    "RAG answers work against provided documents",
+    "Order intent detection works",
+    "Missing verification data triggers follow-up questions",
+    "Validation works for SSN and DOB",
+    "Tool is called only after validation",
+    "Mock shipment status is returned",
+    "Session context persists across turns",
+    "AWS backend is deployable",
+    "Repo includes documentation"
+  ]
+}
