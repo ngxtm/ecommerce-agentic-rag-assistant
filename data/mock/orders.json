@@ -1,0 +1,12 @@
+[
+  {
+    "customer_id": "C001",
+    "full_name": "John Doe",
+    "dob": "1990-06-15",
+    "ssn_last4": "1234",
+    "order_id": "ORD-1001",
+    "shipment_status": "In Transit",
+    "carrier": "UPS",
+    "estimated_delivery": "2026-04-20"
+  }
+]
