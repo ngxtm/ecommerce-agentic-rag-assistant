@@ -9,6 +9,7 @@ build/
 .terraform/
 *.tfstate
 *.tfstate.*
+infra/terraform/terraform.tfvars
 
 
 docs/
