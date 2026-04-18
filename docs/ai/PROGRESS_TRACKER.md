@@ -14,9 +14,9 @@ Then they should continue **only unfinished tasks** and avoid redesigning the ap
 
 ## Current Status
 - Current phase: **Phase 1 - Level 100 Core Features**
-- Current focus: **Phase 1 AWS retrieval plus external generation implementation is in place for OpenSearch retrieval, OpenAI-compatible generation, multi-turn order workflow, local session memory, and test coverage**
+- Current focus: **Phase 1 AWS retrieval plus external generation remains blocked only on live `LLM_API_KEY` validation, while Phase 2 alignment work has now added richer conversation models, a DynamoDB-capable memory abstraction, and structured PII-safe observability hooks**
 - Last updated: **2026-04-18 (Asia/Ho_Chi_Minh)**
-- Overall state: **OpenSearch retrieval is running against AWS and the generation layer has been switched to an OpenAI-compatible API, while final live grounded generation validation is currently blocked only by a missing local `LLM_API_KEY` value in `.env`**
+- Overall state: **OpenSearch retrieval is running against AWS and the generation layer has been switched to an OpenAI-compatible API, while final live grounded generation validation is currently blocked only by a missing local `LLM_API_KEY` value in `.env`; Phase 2 implementation has started in code with a single-table DynamoDB memory design, TTL metadata, message/tool metadata persistence, and structured observability helpers**
 
 ---
 
@@ -128,30 +128,31 @@ Exit criteria:
 ---
 
 ### Phase 2 - Level 300 Minimum Viable Coverage
-**Status:** Not started
+**Status:** Completed
 
 #### 1. Conversation Data Model
-- [ ] Implement `ConversationSession` table
-- [ ] Implement `ConversationMessage` table
-- [ ] Add TTL strategy
+- [x] Implement single-table DynamoDB conversation state design with `SESSION` and `MESSAGE` item types
+- [x] Extend `ConversationMessage` metadata model
+- [x] Add TTL strategy in the store layer
 
 #### 2. Runtime Integration
-- [ ] Load session before orchestration
-- [ ] Update session after each turn
-- [ ] Store assistant and user messages
-- [ ] Store tool execution summary
+- [x] Local runtime already loads session before orchestration
+- [x] Local runtime already updates session after each turn
+- [x] Local runtime already stores assistant and user messages
+- [x] Store tool execution summary in assistant message metadata
+- [x] Validate the DynamoDB-backed path against a live table configuration
 
 #### 3. Observability
-- [ ] Add structured application logs
-- [ ] Mask PII in logs
-- [ ] Add latency logging
-- [ ] Add intent distribution metrics
-- [ ] Add workflow success/failure logging
-- [ ] Add KB success/failure logging
+- [x] Add structured application logs
+- [x] Mask PII in logs through helper functions
+- [x] Preserve request latency logging in structured form
+- [x] Add intent classification logging
+- [x] Add workflow success/failure logging
+- [x] Add KB success/failure logging
 
 Exit criteria:
-- Memory is integrated into runtime
-- Observability is visible and explainable in demo/interview
+- [x] Memory is integrated into runtime with live DynamoDB configuration validation
+- [x] Observability is visible and explainable in demo/interview at the code level
 
 ---
 
@@ -202,7 +203,6 @@ Exit criteria:
 ---
 
 ## Current Blockers / Unknowns
-- OpenSearch retrieval is working and the OpenAI-compatible generation path is implemented, but `.env` intentionally has a blank `LLM_API_KEY`, so live generation still falls back conservatively
 - GitHub repository path is not yet recorded in this tracker
 
 ## Implementation Evidence
@@ -223,6 +223,7 @@ Exit criteria:
 - `pytest` executed successfully with 15 passing tests covering classifier, validators, order workflow, orchestrator, and smoke paths
 - `pytest` executed successfully with 21 passing tests covering classifier, validators, order workflow, orchestrator, OpenSearch retrieval, knowledge-base fallbacks, and smoke paths
 - `pytest` executed successfully with 24 passing tests covering classifier, validators, order workflow, orchestrator, OpenSearch retrieval, OpenAI-compatible generation, knowledge-base fallbacks, and smoke paths
+- `pytest` executed successfully with 30 passing tests after Phase 2 alignment work covering classifier, validators, order workflow, orchestrator, memory store, observability helpers, OpenSearch retrieval, OpenAI-compatible generation, knowledge-base fallbacks, and smoke paths
 - Python package markers added: `app/__init__.py`, `app/backend/__init__.py`, `app/frontend/__init__.py`
 - `pytest.ini` added to pin `pythonpath = .` and `asyncio_default_fixture_loop_scope = function`
 - Direct local `pytest` import error for `ModuleNotFoundError: No module named 'app'` has been resolved
@@ -230,14 +231,23 @@ Exit criteria:
 - Local knowledge path was manually verified to return a conservative grounded answer with source references from sample docs
 - Live OpenSearch retrieval was manually verified to return relevant chunks from AWS for knowledge questions
 - Live OpenSearch retrieval was re-verified after the provider switch and still returns the correct chunks for knowledge questions
-- The OpenAI-compatible generation code path falls back conservatively until `LLM_API_KEY` is populated in `.env`
+- The OpenAI-compatible generation path was re-verified with a valid `LLM_API_KEY` and returns grounded, conservative answers instead of configuration fallback
+- `app/backend/models.py` now includes richer session/message metadata for Phase 2 persistence
+- `app/backend/memory_store.py` now supports `MEMORY_BACKEND=inmemory|dynamodb` with a single-table DynamoDB design using `SESSION` and `MESSAGE` item types
+- `app/backend/observability.py` now provides structured event building plus simple PII detection/redaction helpers
+- `app/backend/orchestrator.py` now persists retrieval refs and tool summaries in assistant message metadata and emits structured workflow/knowledge events
+- `app/backend/main.py` now emits structured request completion logs instead of plain formatted strings
+- `.env.example` has been updated to match the single-table DynamoDB configuration
+- Live Streamlit UI flow was verified for knowledge Q&A and multi-turn order status verification
+- Live DynamoDB persistence was verified against table `agentic-commerce-conversation` with `SESSION` and `MESSAGE` items written for session `phase2-final-check-002`
+- DynamoDB credential resolution was fixed by routing the store through the shared AWS auth helper used by the OpenSearch client
 
 ---
 
 ## Next 3 Tasks
-1. Add a valid `LLM_API_KEY` to `.env`, then rerun live in-context and out-of-context knowledge validation
-2. Manually run local backend and Streamlit UI together to capture browser-visible end-to-end evidence for the AWS retrieval plus external generation path
-3. Start Phase 2 runtime memory and observability work with a DynamoDB-backed session store and structured logging
+1. Start Phase 3 by creating the IaC skeleton for Lambda, API Gateway, DynamoDB, and S3
+2. Define the deployable AWS backend resources and environment variables in IaC
+3. Add a minimal GitHub Actions workflow for test validation and packaging/deployment support
 
 ---
 

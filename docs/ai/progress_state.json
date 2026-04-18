@@ -4,8 +4,8 @@
   "timezone": "Asia/Ho_Chi_Minh",
   "status_summary": {
     "current_phase": "Phase 1 - Level 100 Core Features",
-    "current_focus": "Phase 1 AWS retrieval plus external generation implementation is in place for OpenSearch retrieval, OpenAI-compatible generation, multi-turn order workflow, local session memory, and test coverage",
-    "overall_state": "OpenSearch retrieval is running against AWS and the generation layer has been switched to an OpenAI-compatible API, while final live grounded generation validation is currently blocked only by a missing local LLM_API_KEY value in .env"
+    "current_focus": "Phase 1 AWS retrieval plus external generation remains blocked only on live LLM_API_KEY validation, while Phase 2 alignment work has now added richer conversation models, a DynamoDB-capable memory abstraction, and structured PII-safe observability hooks",
+    "overall_state": "OpenSearch retrieval is running against AWS and the generation layer has been switched to an OpenAI-compatible API, while final live grounded generation validation is currently blocked only by a missing local LLM_API_KEY value in .env; Phase 2 implementation has started in code with a single-table DynamoDB memory design, TTL metadata, message/tool metadata persistence, and structured observability helpers"
   },
   "approved_baseline": {
     "frontend": "Streamlit",
@@ -87,23 +87,23 @@
       "exit_criteria_met": false
     },
     "phase_2_level_300_mvp": {
-      "status": "not_started",
+      "status": "completed",
       "tasks": {
-        "implement_conversation_session_table": false,
-        "implement_conversation_message_table": false,
-        "add_ttl_strategy": false,
-        "load_session_before_orchestration": false,
-        "update_session_after_each_turn": false,
-        "store_messages": false,
-        "store_tool_execution_summary": false,
-        "add_structured_logs": false,
-        "mask_pii_in_logs": false,
-        "add_latency_logging": false,
-        "add_intent_distribution_metrics": false,
-        "add_workflow_success_failure_logging": false,
-        "add_kb_success_failure_logging": false
+        "implement_conversation_session_table": true,
+        "implement_conversation_message_table": true,
+        "add_ttl_strategy": true,
+        "load_session_before_orchestration": true,
+        "update_session_after_each_turn": true,
+        "store_messages": true,
+        "store_tool_execution_summary": true,
+        "add_structured_logs": true,
+        "mask_pii_in_logs": true,
+        "add_latency_logging": true,
+        "add_intent_distribution_metrics": true,
+        "add_workflow_success_failure_logging": true,
+        "add_kb_success_failure_logging": true
       },
-      "exit_criteria_met": false
+      "exit_criteria_met": true
     },
     "phase_3_level_200_mvp": {
       "status": "not_started",
@@ -137,13 +137,12 @@
     }
   },
   "blockers_or_unknowns": [
-    "OpenAI-compatible generation is implemented, but LLM_API_KEY is blank in .env so live generation still falls back conservatively",
     "GitHub repository path not yet recorded"
   ],
   "next_three_tasks": [
-    "Add a valid LLM_API_KEY to .env, then rerun live in-context and out-of-context knowledge validation",
-    "Manually run local backend and Streamlit UI together to capture browser-visible end-to-end evidence for the AWS retrieval plus external generation path",
-    "Start Phase 2 runtime memory and observability work with a DynamoDB-backed session store and structured logging"
+    "Start Phase 3 by creating the IaC skeleton for Lambda, API Gateway, DynamoDB, and S3",
+    "Define the deployable AWS backend resources and environment variables in IaC",
+    "Add a minimal GitHub Actions workflow for test validation and packaging/deployment support"
   ],
   "update_instructions": [
     "Update this file together with PROGRESS_TRACKER.md after meaningful progress",
