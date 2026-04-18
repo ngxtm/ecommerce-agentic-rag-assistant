@@ -1,0 +1,10 @@
+Gợi ý câu hỏi demo sau khi ingest xong
+
+Bạn có thể test mấy câu này:
+
+“What is the standard shipping delivery window?”
+“When is a customer eligible for free shipping?”
+“Can original shipping fees be refunded?”
+“What items are non-returnable?”
+“What verification is required before sharing order status?”
+“What should support do if tracking shows delivered but the customer cannot find the package?”
