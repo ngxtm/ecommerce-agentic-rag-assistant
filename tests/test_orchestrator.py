@@ -24,6 +24,10 @@ def test_orchestrator_routes_knowledge_questions(mock_answer_question) -> None:
     assert response.next_action.value == "RESPOND"
     assert response.sources
 
+    stored_state = session_store.load(session_id)
+    assert stored_state.recent_messages[-1].retrieval_refs == ["returns-policy-overview"]
+    assert stored_state.recent_messages[-1].contains_pii is False
+
 
 def test_orchestrator_continues_order_flow_without_repeating_keywords() -> None:
     session_id = "order-session"
@@ -42,3 +46,5 @@ def test_orchestrator_continues_order_flow_without_repeating_keywords() -> None:
     assert stored_state.collected_fields.full_name == "John Doe"
     assert stored_state.collected_fields.date_of_birth == "1990-06-15"
     assert stored_state.collected_fields.ssn_last4 == "1234"
+    assert stored_state.recent_messages[-1].tool_name == "mock_order_lookup"
+    assert stored_state.recent_messages[-1].tool_result_summary == "order_found"

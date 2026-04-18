@@ -1,10 +1,20 @@
 import logging
+import json
+import os
 import time
 import uuid
+from pathlib import Path
 
 from fastapi import FastAPI
+from dotenv import load_dotenv
 
+from app.backend.observability import build_log_event
 from app.backend.models import ChatRequest, ChatResponse
+
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+load_dotenv(ROOT_DIR / ".env")
+
 from app.backend.orchestrator import handle_chat
 
 
@@ -15,6 +25,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Agentic Commerce Assistant API", version="0.1.0")
+
+logger.info(
+    json.dumps(
+        build_log_event(
+            "app_config_loaded",
+            app_env=os.getenv("APP_ENV", "unknown"),
+            memory_backend=os.getenv("MEMORY_BACKEND", "inmemory"),
+            dynamodb_conversation_table=os.getenv("DYNAMODB_CONVERSATION_TABLE"),
+            aws_region=os.getenv("AWS_REGION"),
+        )
+    )
+)
 
 
 @app.get("/health")
@@ -31,11 +53,15 @@ def chat(request: ChatRequest) -> ChatResponse:
 
     latency_ms = round((time.perf_counter() - started_at) * 1000, 2)
     logger.info(
-        "chat_request request_id=%s session_id=%s intent=%s next_action=%s latency_ms=%s",
-        request_id,
-        request.session_id,
-        response.intent.value,
-        response.next_action.value,
-        latency_ms,
+        json.dumps(
+            build_log_event(
+                "chat_request_completed",
+                request_id=request_id,
+                session_id=request.session_id,
+                intent=response.intent.value,
+                next_action=response.next_action.value,
+                latency_ms=latency_ms,
+            )
+        )
     )
     return response
