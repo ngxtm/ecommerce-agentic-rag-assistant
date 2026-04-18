@@ -27,8 +27,4 @@ def test_chat_returns_mock_order_flow_response() -> None:
     payload = response.json()
     assert payload["intent"] == "ORDER_STATUS"
     assert payload["next_action"] == "ASK_USER"
-    assert payload["verification_state"]["missing_fields"] == [
-        "full_name",
-        "date_of_birth",
-        "ssn_last4",
-    ]
+    assert payload["verification_state"]["missing_fields"] == ["full_name", "date_of_birth", "ssn_last4"]

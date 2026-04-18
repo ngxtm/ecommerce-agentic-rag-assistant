@@ -22,7 +22,8 @@ def _get_messages() -> list[dict[str, str]]:
 
 st.set_page_config(page_title="Agentic Commerce Assistant", page_icon=":speech_balloon:")
 st.title("Agentic Commerce Assistant")
-st.caption("Phase 0 local UI stub for the Cloud Kinetics assignment")
+st.caption("Phase 1 local UI for knowledge Q&A and order-status verification")
+st.info("For order verification, use date of birth in DD-MM-YYYY format.")
 
 session_id = st.text_input("Session ID", value=_get_session_id())
 messages = _get_messages()
@@ -31,7 +32,7 @@ for message in messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-prompt = st.chat_input("Ask a question about company documents or your order")
+prompt = st.chat_input("Ask about company documents or check an order status")
 
 if prompt:
     messages.append({"role": "user", "content": prompt})

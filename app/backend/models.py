@@ -21,6 +21,13 @@ class VerificationStatus(str, Enum):
     VERIFIED = "verified"
 
 
+class WorkflowState(str, Enum):
+    IDLE = "idle"
+    COLLECTING_ORDER_VERIFICATION = "collecting_order_verification"
+    ORDER_VERIFIED = "order_verified"
+    ORDER_COMPLETED = "order_completed"
+
+
 class ChatRequest(BaseModel):
     session_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
@@ -37,6 +44,25 @@ class VerificationState(BaseModel):
     status: VerificationStatus = VerificationStatus.NOT_STARTED
     missing_fields: list[str] = Field(default_factory=list)
     verified_fields: list[str] = Field(default_factory=list)
+
+
+class CollectedFields(BaseModel):
+    full_name: str | None = None
+    date_of_birth: str | None = None
+    ssn_last4: str | None = None
+
+
+class ConversationMessage(BaseModel):
+    role: str
+    content: str
+
+
+class SessionState(BaseModel):
+    current_intent: Intent | None = None
+    workflow_state: WorkflowState = WorkflowState.IDLE
+    verification_state: VerificationState = Field(default_factory=VerificationState)
+    collected_fields: CollectedFields = Field(default_factory=CollectedFields)
+    recent_messages: list[ConversationMessage] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):
