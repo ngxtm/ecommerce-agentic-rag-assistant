@@ -1,17 +1,17 @@
 {
   "project_name": "Cloud Kinetics SA Intern Assignment - Agentic Conversational System",
-  "last_updated": "2026-04-17",
+  "last_updated": "2026-04-18",
   "timezone": "Asia/Ho_Chi_Minh",
   "status_summary": {
-    "current_phase": "Phase 0 - Project Setup",
-    "current_focus": "Local scaffolding is stable, and pytest import-path compatibility has been fixed for direct local execution",
-    "overall_state": "Phase 0 implementation is in place, smoke tests pass, and the local test runner configuration is stabilized"
+    "current_phase": "Phase 1 - Level 100 Core Features",
+    "current_focus": "Phase 1 AWS retrieval plus external generation implementation is in place for OpenSearch retrieval, OpenAI-compatible generation, multi-turn order workflow, local session memory, and test coverage",
+    "overall_state": "OpenSearch retrieval is running against AWS and the generation layer has been switched to an OpenAI-compatible API, while final live grounded generation validation is currently blocked only by a missing local LLM_API_KEY value in .env"
   },
   "approved_baseline": {
     "frontend": "Streamlit",
     "api_entry": "Amazon API Gateway",
     "orchestrator": "AWS Lambda",
-    "rag": "Amazon Bedrock Knowledge Bases",
+    "rag": "Amazon OpenSearch Serverless retrieval plus OpenAI-compatible generation",
     "document_store": "Amazon S3",
     "vector_store": "S3 Vectors",
     "order_tool": "AWS Lambda mock order status service",
@@ -54,35 +54,35 @@
       "exit_criteria_met": false
     },
     "phase_1_level_100_core": {
-      "status": "not_started",
+      "status": "in_progress",
       "tasks": {
-        "create_streamlit_chat_interface": false,
-        "render_chat_history": false,
-        "connect_ui_to_backend": false,
-        "create_chat_api_contract": false,
-        "add_request_response_models": false,
-        "implement_orchestration_flow": false,
-        "implement_rule_based_classifier": false,
-        "route_order_status_requests": false,
-        "route_knowledge_qa_requests": false,
-        "create_s3_document_bucket": false,
-        "upload_sample_documents": false,
+        "create_streamlit_chat_interface": true,
+        "render_chat_history": true,
+        "connect_ui_to_backend": true,
+        "create_chat_api_contract": true,
+        "add_request_response_models": true,
+        "implement_orchestration_flow": true,
+        "implement_rule_based_classifier": true,
+        "route_order_status_requests": true,
+        "route_knowledge_qa_requests": true,
+        "create_s3_document_bucket": true,
+        "upload_sample_documents": true,
         "create_bedrock_knowledge_base": false,
         "connect_s3_data_source": false,
         "trigger_ingestion_sync": false,
-        "implement_backend_kb_query_call": false,
-        "return_grounded_answer": false,
-        "define_workflow_state_model": false,
-        "collect_full_name": false,
-        "collect_dob": false,
-        "collect_ssn_last4": false,
-        "validate_required_fields": false,
-        "call_mock_order_tool_after_validation": false,
-        "return_shipment_result": false,
-        "persist_session_state": false,
-        "persist_verification_fields": false,
-        "persist_chat_messages": false,
-        "load_previous_state_next_turn": false
+        "implement_backend_kb_query_call": true,
+        "return_grounded_answer": true,
+        "define_workflow_state_model": true,
+        "collect_full_name": true,
+        "collect_dob": true,
+        "collect_ssn_last4": true,
+        "validate_required_fields": true,
+        "call_mock_order_tool_after_validation": true,
+        "return_shipment_result": true,
+        "persist_session_state": true,
+        "persist_verification_fields": true,
+        "persist_chat_messages": true,
+        "load_previous_state_next_turn": true
       },
       "exit_criteria_met": false
     },
@@ -137,13 +137,13 @@
     }
   },
   "blockers_or_unknowns": [
-    "AWS credentials and Bedrock access not yet confirmed",
+    "OpenAI-compatible generation is implemented, but LLM_API_KEY is blank in .env so live generation still falls back conservatively",
     "GitHub repository path not yet recorded"
   ],
   "next_three_tasks": [
-    "Manually run local backend and Streamlit UI together to capture end-to-end placeholder evidence",
-    "Implement Phase 1 rule-based classifier and expand orchestrator routing behavior",
-    "Prepare sample documents and Bedrock Knowledge Base integration scaffolding"
+    "Add a valid LLM_API_KEY to .env, then rerun live in-context and out-of-context knowledge validation",
+    "Manually run local backend and Streamlit UI together to capture browser-visible end-to-end evidence for the AWS retrieval plus external generation path",
+    "Start Phase 2 runtime memory and observability work with a DynamoDB-backed session store and structured logging"
   ],
   "update_instructions": [
     "Update this file together with PROGRESS_TRACKER.md after meaningful progress",

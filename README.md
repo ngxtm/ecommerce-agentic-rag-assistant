@@ -14,29 +14,35 @@ Build a submission-ready MVP that can:
 - Local backend: `FastAPI`
 - Cloud API entry: `Amazon API Gateway`
 - Backend orchestration: `AWS Lambda`
-- RAG: `Amazon Bedrock Knowledge Bases`
 - Documents: `Amazon S3`
-- Vector store: `S3 Vectors`
+- Retrieval: `Amazon OpenSearch Serverless` search collection with BM25/full-text search
+- Grounded generation: `OpenAI-compatible API`
 - Session memory: `DynamoDB`
 - Observability: `CloudWatch Logs` and `CloudWatch Metrics`
 - IaC: `Terraform`
 
-## Phase 0 Scope
-Phase 0 establishes the local development skeleton before real integrations are added.
+## Retrieval And Generation Delta
+The target retrieval architecture was originally Amazon Bedrock Knowledge Bases with S3/S3 Vectors. However, repeated ingestion attempts failed with Bedrock 429 throttling on embedding calls. To keep the solution AWS-native while unblocking retrieval, the current Phase 1 retrieval path uses Amazon OpenSearch Serverless search collections for document retrieval. Grounded generation was then moved from Amazon Bedrock Runtime to an OpenAI-compatible API because Bedrock invocation reliability and quota constraints blocked stable validation. This keeps the application contract stable, limits the architecture delta to the retrieval and generation layers, and preserves a clean path to return generation to Bedrock later.
 
-Included in this phase:
+## Current Scope
+The repository has completed local Phase 1 core behavior and now includes an AWS retrieval path for knowledge questions.
+
+Implemented now:
 - FastAPI backend with `GET /health` and `POST /chat`
 - stable request/response contract for chat orchestration
-- local logging stub with request metadata and latency
 - Streamlit frontend wired to the backend
-- sample mock order data
-- smoke tests
+- multi-turn order workflow with required verification
+- local session memory for Phase 1
+- OpenSearch retrieval client and indexing script
+- OpenAI-compatible generation integration path
+- sample mock order data and sample knowledge docs
+- automated tests
 
 Not included yet:
-- Bedrock Knowledge Base integration
 - DynamoDB session persistence
-- AWS deployment
-- IaC resources
+- full observability coverage
+- AWS deployment and IaC resources
+- final live generation validation until a valid `LLM_API_KEY` is present in `.env`
 
 ## API Contract
 
@@ -93,6 +99,21 @@ pip install -r requirements.txt
 ### 3. Configure environment variables
 Copy `.env.example` to `.env` and adjust values if needed.
 
+For the AWS retrieval path, configure at least:
+
+```env
+AWS_REGION=us-east-1
+LLM_PROVIDER=openai_compatible
+LLM_API_KEY=<external-llm-api-key>
+LLM_BASE_URL=https://r2lj67q.9router.com/v1
+LLM_MODEL=cx/gpt-5.4
+LLM_TIMEOUT_SECONDS=30
+OPENSEARCH_COLLECTION_ENDPOINT=<aoss-endpoint>
+OPENSEARCH_INDEX_NAME=policy-faq-chunks
+DOCS_S3_BUCKET=<docs-bucket>
+DOCS_S3_PREFIX=phase1-kb/
+```
+
 ### 4. Run the backend
 ```powershell
 uvicorn app.backend.main:app --reload
@@ -108,14 +129,26 @@ streamlit run app/frontend/streamlit_app.py
 pytest
 ```
 
+### 7. Index sample docs into OpenSearch
+```powershell
+.venv\Scripts\python.exe scripts/index_sample_docs.py
+```
+
 ## Current Repo Layout
 ```text
 app/
   backend/
+    classifier.py
     handler.py
+    knowledge_base.py
+    llm_client.py
     main.py
+    memory_store.py
     models.py
     orchestrator.py
+    order_workflow.py
+    search_client.py
+    validators.py
   frontend/
     streamlit_app.py
 data/
@@ -127,6 +160,13 @@ docs/
   architecture/
 infra/
 scripts/
+  index_sample_docs.py
 tests/
+  test_knowledge_base.py
+  test_llm_client.py
+  test_orchestrator.py
+  test_order_workflow.py
+  test_search_retrieval.py
   test_smoke.py
+  test_validators.py
 ```
