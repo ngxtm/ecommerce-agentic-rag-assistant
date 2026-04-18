@@ -33,11 +33,32 @@ jobs:
   terraform-plan:
     runs-on: ubuntu-latest
     needs: package-lambda
-    if: ${{ secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' && secrets.TF_VAR_llm_api_key != '' }}
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+      TF_VAR_llm_api_key: ${{ secrets.TF_VAR_llm_api_key }}
+      TF_VAR_docs_bucket_name: ${{ vars.TF_VAR_docs_bucket_name }}
+      TF_VAR_opensearch_collection_endpoint: ${{ vars.TF_VAR_opensearch_collection_endpoint }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Validate required deployment configuration
+        shell: bash
+        run: |
+          missing=()
+          [[ -z "$AWS_ACCESS_KEY_ID" ]] && missing+=("AWS_ACCESS_KEY_ID")
+          [[ -z "$AWS_SECRET_ACCESS_KEY" ]] && missing+=("AWS_SECRET_ACCESS_KEY")
+          [[ -z "$TF_VAR_llm_api_key" ]] && missing+=("TF_VAR_llm_api_key")
+          [[ -z "$TF_VAR_docs_bucket_name" ]] && missing+=("TF_VAR_docs_bucket_name")
+          [[ -z "$TF_VAR_opensearch_collection_endpoint" ]] && missing+=("TF_VAR_opensearch_collection_endpoint")
+
+          if (( ${#missing[@]} > 0 )); then
+            echo "Missing required GitHub Actions secrets/variables: ${missing[*]}" >&2
+            exit 1
+          fi
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
@@ -51,9 +72,9 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ env.AWS_SESSION_TOKEN }}
           aws-region: ${{ vars.TF_VAR_aws_region || 'us-east-1' }}
 
       - name: Initialize Terraform
@@ -67,13 +88,13 @@ jobs:
           TF_VAR_lambda_function_name: ${{ vars.TF_VAR_lambda_function_name || 'agentic-commerce-backend-dev' }}
           TF_VAR_conversation_table_name: ${{ vars.TF_VAR_conversation_table_name || 'agentic-commerce-conversation-dev' }}
           TF_VAR_api_name: ${{ vars.TF_VAR_api_name || 'agentic-commerce-api-dev' }}
-          TF_VAR_docs_bucket_name: ${{ vars.TF_VAR_docs_bucket_name }}
+          TF_VAR_docs_bucket_name: ${{ env.TF_VAR_docs_bucket_name }}
           TF_VAR_create_docs_bucket: ${{ vars.TF_VAR_create_docs_bucket || 'false' }}
           TF_VAR_docs_s3_prefix: ${{ vars.TF_VAR_docs_s3_prefix || 'phase1-kb/' }}
-          TF_VAR_opensearch_collection_endpoint: ${{ vars.TF_VAR_opensearch_collection_endpoint }}
+          TF_VAR_opensearch_collection_endpoint: ${{ env.TF_VAR_opensearch_collection_endpoint }}
           TF_VAR_opensearch_index_name: ${{ vars.TF_VAR_opensearch_index_name || 'policy-faq-chunks' }}
           TF_VAR_llm_provider: ${{ vars.TF_VAR_llm_provider || 'openai_compatible' }}
-          TF_VAR_llm_api_key: ${{ secrets.TF_VAR_llm_api_key }}
+          TF_VAR_llm_api_key: ${{ env.TF_VAR_llm_api_key }}
           TF_VAR_llm_base_url: ${{ vars.TF_VAR_llm_base_url || 'https://r2lj67q.9router.com/v1' }}
           TF_VAR_llm_model: ${{ vars.TF_VAR_llm_model || 'cx/gpt-5.4' }}
           TF_VAR_lambda_artifact_path: ../../artifacts/backend-lambda.zip
