@@ -1,48 +1,106 @@
 # Agentic Commerce Assistant
 
-Small-scale agentic conversational system for the Cloud Kinetics Data/AI Solution Architect Intern assignment.
+Agentic conversational assistant for internal knowledge Q&A and verified order status support, built for the Cloud Kinetics Data/AI Solution Architect Intern assignment.
 
-## Goal
-Build a submission-ready MVP that can:
+The system supports grounded document answers, a multi-turn order verification workflow, and session memory. The backend has been deployed and verified live on AWS. The current deployed cloud path uses `Lambda + API Gateway + DynamoDB + OpenSearch Serverless + OpenAI-compatible generation`.
+
+## Current Delivery Status
+- Phase 1: complete on deployed fallback path
+- Phase 2: complete
+- Phase 3: complete and deployed
+- Phase 4: submission polish in progress
+
+## Assignment Scope
 - answer knowledge questions from internal documents via RAG
 - handle an order status workflow with required user verification
 - maintain multi-turn session context
-- show a credible path to AWS deployment, observability, and IaC
+- demonstrate a credible AWS deployment, observability, and IaC path
 
-## Chosen Architecture
+## Deployment Scope
+Phase 3 is a minimum viable cloud deployment for the assignment: deployable, testable, and interview-defensible. It is not full production hardening, so items like multi-environment rollout strategy, WAF, advanced secrets rotation, and a full monitoring stack are intentionally deferred.
+
+## Target Architecture
 - Frontend: `Streamlit`
-- Local backend: `FastAPI`
-- Cloud API entry: `Amazon API Gateway`
+- API entry: `Amazon API Gateway`
 - Backend orchestration: `AWS Lambda`
-- Documents: `Amazon S3`
-- Retrieval: `Amazon OpenSearch Serverless` search collection with BM25/full-text search
+- RAG: `Amazon Bedrock Knowledge Bases`
+- Document store: `Amazon S3`
+- Vector store: `S3 Vectors`
+- Memory: `DynamoDB`
+- Observability: `CloudWatch Logs`, `CloudWatch Metrics`, optional `X-Ray`
+
+## Deployed Fallback Architecture
+- Frontend: `Streamlit`
+- API entry: `Amazon API Gateway HTTP API`
+- Backend orchestration: `AWS Lambda`
+- Lambda adapter: `Mangum`
+- Retrieval: `Amazon OpenSearch Serverless`
 - Grounded generation: `OpenAI-compatible API`
-- Session memory: `DynamoDB`
-- Observability: `CloudWatch Logs` and `CloudWatch Metrics`
-- IaC: `Terraform`
+- Document store: `Amazon S3`
+- Memory: `DynamoDB`
+- Observability: `CloudWatch Logs`, optional `X-Ray`
 
-## Retrieval And Generation Delta
-The target retrieval architecture was originally Amazon Bedrock Knowledge Bases with S3/S3 Vectors. However, repeated ingestion attempts failed with Bedrock 429 throttling on embedding calls. To keep the solution AWS-native while unblocking retrieval, the current Phase 1 retrieval path uses Amazon OpenSearch Serverless search collections for document retrieval. Grounded generation was then moved from Amazon Bedrock Runtime to an OpenAI-compatible API because Bedrock invocation reliability and quota constraints blocked stable validation. This keeps the application contract stable, limits the architecture delta to the retrieval and generation layers, and preserves a clean path to return generation to Bedrock later.
+## Known Architecture Delta
+- Target architecture: `Bedrock Knowledge Bases + S3 + S3 Vectors`
+- Deployed fallback architecture: `OpenSearch Serverless retrieval + OpenAI-compatible generation`
+- Reason: repeated Bedrock throttling, quota, and reliability blockers during implementation
+- Rationale: preserve delivery speed, demo reliability, and an interview-defensible cloud baseline without expanding scope
 
-## Current Scope
-The repository has completed local Phase 1 core behavior and now includes an AWS retrieval path for knowledge questions.
-
-Implemented now:
+## What Was Implemented
 - FastAPI backend with `GET /health` and `POST /chat`
-- stable request/response contract for chat orchestration
-- Streamlit frontend wired to the backend
-- multi-turn order workflow with required verification
-- local session memory for Phase 1
-- OpenSearch retrieval client and indexing script
-- OpenAI-compatible generation integration path
-- sample mock order data and sample knowledge docs
-- automated tests
+- Streamlit frontend connected to the backend contract
+- multi-turn order verification workflow with `full_name`, `date_of_birth`, and `ssn_last4`
+- grounded document Q&A through OpenSearch retrieval and OpenAI-compatible generation
+- DynamoDB-backed session and message persistence
+- structured logging and PII-aware observability helpers
+- Terraform-managed Lambda, API Gateway, DynamoDB, S3, IAM, and log group resources
+- GitHub Actions CI and CD support workflows
 
-Not included yet:
-- DynamoDB session persistence
-- full observability coverage
-- AWS deployment and IaC resources
-- final live generation validation until a valid `LLM_API_KEY` is present in `.env`
+## Deployment Result
+- Phase 3 backend deployment completed successfully on AWS
+- deployed API outputs were captured in `evidence/phase3/terraform-output.json`
+- local Streamlit was validated against the deployed backend, with response evidence captured in `evidence/phase3/frontend-cloud.html`
+
+## Evidence Index
+- `evidence/phase3/terraform-output.json` - Terraform deployment outputs
+- `evidence/phase3/health.json` - deployed health endpoint response
+- `evidence/phase3/knowledge-success.json` - in-context grounded QA response
+- `evidence/phase3/knowledge-fallback.json` - out-of-context conservative fallback
+- `evidence/phase3/order-success.json` - verified order status response
+- `evidence/phase3/dynamodb-query.json` - DynamoDB session and message persistence proof
+- `evidence/phase3/cloudwatch-snippet.txt` - Lambda execution log evidence
+- `evidence/phase3/frontend-cloud.html` - local Streamlit served against cloud backend
+
+## Verification Summary
+- `/health` returns `{"status":"ok"}` on the deployed backend
+- knowledge success behavior was verified with grounded document evidence
+- fallback behavior was verified with an out-of-context prompt that did not hallucinate
+- order verification was verified end-to-end with `DD-MM-YYYY` DOB input
+- DynamoDB session and message writes were verified on the deployed table
+- CloudWatch Lambda execution logs were captured after live verification
+
+## Infrastructure Layout
+- `AWS Lambda` runs the FastAPI backend through `Mangum`
+- `API Gateway HTTP API` exposes exactly `GET /health` and `POST /chat`
+- `DynamoDB` uses a single-table design with `pk`, `sk`, and `ttl`
+- `S3` can be either created by Terraform or reused as an existing docs bucket
+- `CloudWatch log group` is managed explicitly by Terraform with `14` day retention
+
+## Terraform Inputs Vs Lambda Runtime Environment
+Terraform variables are the infrastructure inputs. Lambda environment variables are the runtime values injected by Terraform.
+
+Examples:
+- `TF_VAR_llm_api_key` -> Lambda env `LLM_API_KEY`
+- `TF_VAR_opensearch_collection_endpoint` -> Lambda env `OPENSEARCH_COLLECTION_ENDPOINT`
+- `TF_VAR_docs_bucket_name` -> Lambda env `DOCS_S3_BUCKET`
+
+## Deployment Defaults
+- Lambda runtime: `python3.12`
+- Lambda memory: `512 MB`
+- Lambda timeout: `30 seconds`
+- Lambda log retention: `14 days`
+- Packaging script: `scripts/package_lambda.py`
+- Packaging format: `artifacts/backend-lambda.zip`
 
 ## API Contract
 
@@ -76,14 +134,7 @@ Not included yet:
 }
 ```
 
-## Roadmap
-1. Phase 0: local scaffolding
-2. Phase 1: core orchestration, rule-based classification, and workflow handling
-3. Phase 2: RAG, session memory, and observability expansion
-4. Phase 3: AWS deployment, IaC, and CI/CD
-5. Phase 4: polish, demo, and submission packaging
-
-## Local Setup
+## How To Run Locally
 
 ### 1. Create and activate a virtual environment
 ```powershell
@@ -133,6 +184,124 @@ pytest
 ```powershell
 .venv\Scripts\python.exe scripts/index_sample_docs.py
 ```
+
+## Deployment Steps
+### 1. Package the Lambda artifact
+```powershell
+python scripts/package_lambda.py
+```
+
+### 2. Prepare Terraform variables
+Copy `infra/terraform/terraform.tfvars.example` to `infra/terraform/terraform.tfvars` and adjust the values.
+
+Do not commit a real `llm_api_key` into Terraform files. Provide it through a local non-committed tfvars file or shell input such as `TF_VAR_llm_api_key`.
+
+### 3. Initialize and validate Terraform
+```powershell
+terraform -chdir=infra/terraform init
+terraform -chdir=infra/terraform fmt -check
+terraform -chdir=infra/terraform validate
+```
+
+### 4. Plan and apply infrastructure
+```powershell
+terraform -chdir=infra/terraform plan
+terraform -chdir=infra/terraform apply
+```
+
+### 5. Capture deployment outputs
+```powershell
+terraform -chdir=infra/terraform output -json
+```
+
+The deployed `api_url` is captured in `evidence/phase3/terraform-output.json` and can be exported to the frontend through `BACKEND_BASE_URL`.
+
+## Verification Steps
+Order verification DOB input must use `DD-MM-YYYY`.
+
+### 1. Verify health endpoint
+```powershell
+curl <API_URL>/health
+```
+
+Expected response:
+```json
+{"status":"ok"}
+```
+
+### 2. Verify knowledge retrieval
+```powershell
+curl -X POST <API_URL>/chat ^
+  -H "Content-Type: application/json" ^
+  -d "{\"session_id\":\"phase3-kb-001\",\"message\":\"What is the return policy?\"}"
+```
+
+Fallback is considered correct if the API returns a valid response and the answer clearly indicates that there is not enough grounded context instead of inventing unsupported information.
+
+### 3. Verify order workflow
+```powershell
+curl -X POST <API_URL>/chat ^
+  -H "Content-Type: application/json" ^
+  -d "{\"session_id\":\"phase3-order-001\",\"message\":\"Where is my order?\"}"
+```
+
+```powershell
+curl -X POST <API_URL>/chat ^
+  -H "Content-Type: application/json" ^
+  -d "{\"session_id\":\"phase3-order-001\",\"message\":\"My name is John Smith\"}"
+```
+
+```powershell
+curl -X POST <API_URL>/chat ^
+  -H "Content-Type: application/json" ^
+  -d "{\"session_id\":\"phase3-order-001\",\"message\":\"My date of birth is 15-01-1990\"}"
+```
+
+```powershell
+curl -X POST <API_URL>/chat ^
+  -H "Content-Type: application/json" ^
+  -d "{\"session_id\":\"phase3-order-001\",\"message\":\"Last 4 of my SSN is 1234\"}"
+```
+
+### 4. Verify DynamoDB persistence
+- Confirm the session item exists with `pk=session_id` and `sk=SESSION`
+- Confirm message items exist with `pk=session_id` and `sk=MESSAGE#...`
+- Confirm `ttl` is written on both session and message records
+
+### 5. Verify OpenSearch connectivity
+If knowledge retrieval fails after deployment, verify all three of the following:
+- the Lambda role permissions allow signed AOSS requests
+- the AOSS data access policy trusts the Lambda role principal
+- the deployed `OPENSEARCH_COLLECTION_ENDPOINT` value is correct
+
+## Demo Flow
+1. Show the deployment result and evidence index
+2. Verify the deployed `/health` response
+3. Show a grounded knowledge success response
+4. Show a conservative fallback response for an out-of-context question
+5. Walk through the order verification workflow with `DD-MM-YYYY` DOB input
+6. Show DynamoDB persistence and CloudWatch log evidence
+
+## Interview Talking Points
+- why `Lambda + API Gateway + DynamoDB` was chosen for a fast, serverless deployment baseline
+- why the project uses a single-table DynamoDB memory model with `SESSION` and `MESSAGE` items
+- why the deployed fallback architecture was used instead of forcing Bedrock under quota and throttling pressure
+- why conservative fallback behavior matters for non-hallucinated customer support answers
+- what production hardening would be prioritized after assignment delivery
+
+## CI/CD Model
+- `CI`: runs `pytest`, `terraform fmt -check`, and `terraform validate`
+- `CD support`: packages the Lambda artifact and can run `terraform plan`
+- `Apply`: remains manual or gated to reduce accidental cloud changes during the assignment
+
+## Deferred Items
+- streaming responses
+- frontend cloud hosting
+- WAF
+- multi-env
+- Secrets Manager rotation
+- full monitoring/alarming
+- migration back to Bedrock target path
 
 ## Current Repo Layout
 ```text
