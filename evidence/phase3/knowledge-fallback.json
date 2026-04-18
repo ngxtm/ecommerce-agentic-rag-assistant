@@ -1,0 +1,32 @@
+{
+  "answer": "I do not have enough grounded context to answer the company policy for lunar mission refunds on space cargo. The provided context only covers order tracking delays and verification requirements.",
+  "intent": "KNOWLEDGE_QA",
+  "sources": [
+    {
+      "source_id": "order_tracking_faq-81c01b68-3d25-490f-82f2-df8f69c25800",
+      "title": "Order Tracking FAQ - What should support do for delayed packages?",
+      "snippet": "If the package is delayed:\n- review the latest tracking event\n- compare it with the estimated delivery window\n- advise the customer to wait 2 additional business days if the delay is minor\n- escalate if there is no movem"
+    },
+    {
+      "source_id": "order_tracking_faq-f7dcfd59-3682-4bc0-a1b3-2a3afdf8a49a",
+      "title": "Order Tracking FAQ - What verification is required before sharing order status?",
+      "snippet": "Before the assistant or support agent shares order-specific shipment details, the customer must provide:\n- full name\n- date of birth\n- last 4 digits of SSN\nThis verification step is required to protect customer privacy a"
+    },
+    {
+      "source_id": "order_tracking_faq-dd9de179-035d-4a47-995d-a7a164670d03",
+      "title": "Order Tracking FAQ - What should support do for delayed packages?",
+      "snippet": "If the package is delayed:\n- review the latest tracking event\n- compare it with the estimated delivery window\n- advise the customer to wait 2 additional business days if the delay is minor\n- escalate if there is no movem"
+    },
+    {
+      "source_id": "order_tracking_faq-8a6c9f2f-266b-4615-aea0-2b6cd3895800",
+      "title": "Order Tracking FAQ - What verification is required before sharing order status?",
+      "snippet": "Before the assistant or support agent shares order-specific shipment details, the customer must provide:\n- full name\n- date of birth\n- last 4 digits of SSN\nThis verification step is required to protect customer privacy a"
+    }
+  ],
+  "verification_state": {
+    "status": "not_started",
+    "missing_fields": [],
+    "verified_fields": []
+  },
+  "next_action": "RESPOND"
+}

@@ -1,0 +1,27 @@
+{
+  "api_url": {
+    "sensitive": false,
+    "type": "string",
+    "value": "https://sldzem1pol.execute-api.us-east-1.amazonaws.com/"
+  },
+  "aws_region": {
+    "sensitive": false,
+    "type": "string",
+    "value": "us-east-1"
+  },
+  "conversation_table_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "agentic-commerce-conversation"
+  },
+  "docs_bucket_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "agentic-embedding-us"
+  },
+  "lambda_function_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "agentic-commerce-backend-dev"
+  }
+}

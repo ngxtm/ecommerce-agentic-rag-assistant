@@ -1,0 +1,512 @@
+{
+    "Items": [
+        {
+            "content": {
+                "S": "Where is my order?"
+            },
+            "retrieval_refs": {
+                "L": []
+            },
+            "message_ts": {
+                "S": "2026-04-18T11:46:06.534769+00:00"
+            },
+            "ttl": {
+                "N": "1777117566"
+            },
+            "tool_name": {
+                "NULL": true
+            },
+            "message_id": {
+                "S": "5ed2ecac-31ca-41d6-bdd8-1ef4bc999fa2"
+            },
+            "item_type": {
+                "S": "MESSAGE"
+            },
+            "role": {
+                "S": "user"
+            },
+            "contains_pii": {
+                "BOOL": false
+            },
+            "session_id": {
+                "S": "phase3-order-003"
+            },
+            "tool_result_summary": {
+                "NULL": true
+            },
+            "pk": {
+                "S": "phase3-order-003"
+            },
+            "sk": {
+                "S": "MESSAGE#2026-04-18T11:46:06.534769+00:00#5ed2ecac-31ca-41d6-bdd8-1ef4bc999fa2"
+            }
+        },
+        {
+            "content": {
+                "S": "I can help check your order status, but I need to verify your identity first. Please share your full name."
+            },
+            "retrieval_refs": {
+                "L": []
+            },
+            "message_ts": {
+                "S": "2026-04-18T11:46:06.577875+00:00"
+            },
+            "ttl": {
+                "N": "1777117566"
+            },
+            "tool_name": {
+                "NULL": true
+            },
+            "message_id": {
+                "S": "fb02deee-c30b-452f-8e90-e7c539574a8d"
+            },
+            "item_type": {
+                "S": "MESSAGE"
+            },
+            "role": {
+                "S": "assistant"
+            },
+            "contains_pii": {
+                "BOOL": false
+            },
+            "session_id": {
+                "S": "phase3-order-003"
+            },
+            "tool_result_summary": {
+                "NULL": true
+            },
+            "pk": {
+                "S": "phase3-order-003"
+            },
+            "sk": {
+                "S": "MESSAGE#2026-04-18T11:46:06.577875+00:00#fb02deee-c30b-452f-8e90-e7c539574a8d"
+            }
+        },
+        {
+            "content": {
+                "S": "My name is John Doe"
+            },
+            "retrieval_refs": {
+                "L": []
+            },
+            "message_ts": {
+                "S": "2026-04-18T11:46:07.444331+00:00"
+            },
+            "ttl": {
+                "N": "1777117567"
+            },
+            "tool_name": {
+                "NULL": true
+            },
+            "message_id": {
+                "S": "15e73c1b-feb2-4656-9cf5-06854b308217"
+            },
+            "item_type": {
+                "S": "MESSAGE"
+            },
+            "role": {
+                "S": "user"
+            },
+            "contains_pii": {
+                "BOOL": true
+            },
+            "session_id": {
+                "S": "phase3-order-003"
+            },
+            "tool_result_summary": {
+                "NULL": true
+            },
+            "pk": {
+                "S": "phase3-order-003"
+            },
+            "sk": {
+                "S": "MESSAGE#2026-04-18T11:46:07.444331+00:00#15e73c1b-feb2-4656-9cf5-06854b308217"
+            }
+        },
+        {
+            "content": {
+                "S": "I can help check your order status, but I need to verify your identity first. Please share your date of birth in DD-MM-YYYY format."
+            },
+            "retrieval_refs": {
+                "L": []
+            },
+            "message_ts": {
+                "S": "2026-04-18T11:46:07.499314+00:00"
+            },
+            "ttl": {
+                "N": "1777117567"
+            },
+            "tool_name": {
+                "NULL": true
+            },
+            "message_id": {
+                "S": "d60b48be-cac8-4f40-9b47-97937764ef08"
+            },
+            "item_type": {
+                "S": "MESSAGE"
+            },
+            "role": {
+                "S": "assistant"
+            },
+            "contains_pii": {
+                "BOOL": false
+            },
+            "session_id": {
+                "S": "phase3-order-003"
+            },
+            "tool_result_summary": {
+                "NULL": true
+            },
+            "pk": {
+                "S": "phase3-order-003"
+            },
+            "sk": {
+                "S": "MESSAGE#2026-04-18T11:46:07.499314+00:00#d60b48be-cac8-4f40-9b47-97937764ef08"
+            }
+        },
+        {
+            "content": {
+                "S": "My date of birth is 15-06-1990"
+            },
+            "retrieval_refs": {
+                "L": []
+            },
+            "message_ts": {
+                "S": "2026-04-18T11:46:08.315301+00:00"
+            },
+            "ttl": {
+                "N": "1777117568"
+            },
+            "tool_name": {
+                "NULL": true
+            },
+            "message_id": {
+                "S": "426ffa77-7457-40ad-b030-32a267bef786"
+            },
+            "item_type": {
+                "S": "MESSAGE"
+            },
+            "role": {
+                "S": "user"
+            },
+            "contains_pii": {
+                "BOOL": true
+            },
+            "session_id": {
+                "S": "phase3-order-003"
+            },
+            "tool_result_summary": {
+                "NULL": true
+            },
+            "pk": {
+                "S": "phase3-order-003"
+            },
+            "sk": {
+                "S": "MESSAGE#2026-04-18T11:46:08.315301+00:00#426ffa77-7457-40ad-b030-32a267bef786"
+            }
+        },
+        {
+            "content": {
+                "S": "I can help check your order status, but I need to verify your identity first. Please share the last 4 digits of your SSN."
+            },
+            "retrieval_refs": {
+                "L": []
+            },
+            "message_ts": {
+                "S": "2026-04-18T11:46:08.364199+00:00"
+            },
+            "ttl": {
+                "N": "1777117568"
+            },
+            "tool_name": {
+                "NULL": true
+            },
+            "message_id": {
+                "S": "2d8cb762-d072-4dd9-9298-f54a73aadfa2"
+            },
+            "item_type": {
+                "S": "MESSAGE"
+            },
+            "role": {
+                "S": "assistant"
+            },
+            "contains_pii": {
+                "BOOL": false
+            },
+            "session_id": {
+                "S": "phase3-order-003"
+            },
+            "tool_result_summary": {
+                "NULL": true
+            },
+            "pk": {
+                "S": "phase3-order-003"
+            },
+            "sk": {
+                "S": "MESSAGE#2026-04-18T11:46:08.364199+00:00#2d8cb762-d072-4dd9-9298-f54a73aadfa2"
+            }
+        },
+        {
+            "recent_messages": {
+                "L": [
+                    {
+                        "M": {
+                            "tool_name": {
+                                "NULL": true
+                            },
+                            "role": {
+                                "S": "user"
+                            },
+                            "tool_result_summary": {
+                                "NULL": true
+                            },
+                            "contains_pii": {
+                                "BOOL": false
+                            },
+                            "retrieval_refs": {
+                                "L": []
+                            },
+                            "message_id": {
+                                "S": "5ed2ecac-31ca-41d6-bdd8-1ef4bc999fa2"
+                            },
+                            "ttl": {
+                                "N": "1777117566"
+                            },
+                            "message_ts": {
+                                "S": "2026-04-18T11:46:06.534769+00:00"
+                            },
+                            "content": {
+                                "S": "Where is my order?"
+                            }
+                        }
+                    },
+                    {
+                        "M": {
+                            "tool_name": {
+                                "NULL": true
+                            },
+                            "role": {
+                                "S": "assistant"
+                            },
+                            "tool_result_summary": {
+                                "NULL": true
+                            },
+                            "contains_pii": {
+                                "BOOL": false
+                            },
+                            "retrieval_refs": {
+                                "L": []
+                            },
+                            "message_id": {
+                                "S": "fb02deee-c30b-452f-8e90-e7c539574a8d"
+                            },
+                            "ttl": {
+                                "N": "1777117566"
+                            },
+                            "message_ts": {
+                                "S": "2026-04-18T11:46:06.577875+00:00"
+                            },
+                            "content": {
+                                "S": "I can help check your order status, but I need to verify your identity first. Please share your full name."
+                            }
+                        }
+                    },
+                    {
+                        "M": {
+                            "tool_name": {
+                                "NULL": true
+                            },
+                            "role": {
+                                "S": "user"
+                            },
+                            "tool_result_summary": {
+                                "NULL": true
+                            },
+                            "contains_pii": {
+                                "BOOL": true
+                            },
+                            "retrieval_refs": {
+                                "L": []
+                            },
+                            "message_id": {
+                                "S": "15e73c1b-feb2-4656-9cf5-06854b308217"
+                            },
+                            "ttl": {
+                                "N": "1777117567"
+                            },
+                            "message_ts": {
+                                "S": "2026-04-18T11:46:07.444331+00:00"
+                            },
+                            "content": {
+                                "S": "My name is John Doe"
+                            }
+                        }
+                    },
+                    {
+                        "M": {
+                            "tool_name": {
+                                "NULL": true
+                            },
+                            "role": {
+                                "S": "assistant"
+                            },
+                            "tool_result_summary": {
+                                "NULL": true
+                            },
+                            "contains_pii": {
+                                "BOOL": false
+                            },
+                            "retrieval_refs": {
+                                "L": []
+                            },
+                            "message_id": {
+                                "S": "d60b48be-cac8-4f40-9b47-97937764ef08"
+                            },
+                            "ttl": {
+                                "N": "1777117567"
+                            },
+                            "message_ts": {
+                                "S": "2026-04-18T11:46:07.499314+00:00"
+                            },
+                            "content": {
+                                "S": "I can help check your order status, but I need to verify your identity first. Please share your date of birth in DD-MM-YYYY format."
+                            }
+                        }
+                    },
+                    {
+                        "M": {
+                            "tool_name": {
+                                "NULL": true
+                            },
+                            "role": {
+                                "S": "user"
+                            },
+                            "tool_result_summary": {
+                                "NULL": true
+                            },
+                            "contains_pii": {
+                                "BOOL": true
+                            },
+                            "retrieval_refs": {
+                                "L": []
+                            },
+                            "message_id": {
+                                "S": "426ffa77-7457-40ad-b030-32a267bef786"
+                            },
+                            "ttl": {
+                                "N": "1777117568"
+                            },
+                            "message_ts": {
+                                "S": "2026-04-18T11:46:08.315301+00:00"
+                            },
+                            "content": {
+                                "S": "My date of birth is 15-06-1990"
+                            }
+                        }
+                    },
+                    {
+                        "M": {
+                            "tool_name": {
+                                "NULL": true
+                            },
+                            "role": {
+                                "S": "assistant"
+                            },
+                            "tool_result_summary": {
+                                "NULL": true
+                            },
+                            "contains_pii": {
+                                "BOOL": false
+                            },
+                            "retrieval_refs": {
+                                "L": []
+                            },
+                            "message_id": {
+                                "S": "2d8cb762-d072-4dd9-9298-f54a73aadfa2"
+                            },
+                            "ttl": {
+                                "N": "1777117568"
+                            },
+                            "message_ts": {
+                                "S": "2026-04-18T11:46:08.364199+00:00"
+                            },
+                            "content": {
+                                "S": "I can help check your order status, but I need to verify your identity first. Please share the last 4 digits of your SSN."
+                            }
+                        }
+                    }
+                ]
+            },
+            "current_intent": {
+                "S": "ORDER_STATUS"
+            },
+            "created_at": {
+                "S": "2026-04-18T11:46:06.534935+00:00"
+            },
+            "ttl": {
+                "N": "1777117568"
+            },
+            "verification_state": {
+                "M": {
+                    "missing_fields": {
+                        "L": [
+                            {
+                                "S": "ssn_last4"
+                            }
+                        ]
+                    },
+                    "verified_fields": {
+                        "L": [
+                            {
+                                "S": "full_name"
+                            },
+                            {
+                                "S": "date_of_birth"
+                            }
+                        ]
+                    },
+                    "status": {
+                        "S": "collecting"
+                    }
+                }
+            },
+            "item_type": {
+                "S": "SESSION"
+            },
+            "updated_at": {
+                "S": "2026-04-18T11:46:08.364400+00:00"
+            },
+            "verified_customer_ref": {
+                "NULL": true
+            },
+            "workflow_state": {
+                "S": "collecting_order_verification"
+            },
+            "collected_fields": {
+                "M": {
+                    "date_of_birth": {
+                        "S": "1990-06-15"
+                    },
+                    "full_name": {
+                        "S": "John Doe"
+                    },
+                    "ssn_last4": {
+                        "NULL": true
+                    }
+                }
+            },
+            "session_id": {
+                "S": "phase3-order-003"
+            },
+            "pk": {
+                "S": "phase3-order-003"
+            },
+            "sk": {
+                "S": "SESSION"
+            }
+        }
+    ],
+    "Count": 7,
+    "ScannedCount": 7,
+    "ConsumedCapacity": null
+}

@@ -1,0 +1,32 @@
+{
+  "answer": "From the provided context, the return policy details available are:\n\n- Return shipping is free if the item is defective, damaged, or incorrect.\n- For discretionary returns, return shipping may be deducted from the refund unless a free return promotion applies.\n- Original outbound shipping charges are generally not refunded unless the return is due to the company’s error.\n\nI do not have enough grounded context about any other parts of the return policy beyond these points.",
+  "intent": "KNOWLEDGE_QA",
+  "sources": [
+    {
+      "source_id": "returns_policy-5c16b18d-ac97-4cca-880a-d20c5114bab5",
+      "title": "Returns Policy - Return Shipping Fees",
+      "snippet": "- Return shipping is free if the item is defective, damaged, or incorrect\n- Return shipping may be deducted from the refund for discretionary returns unless a free return promotion applies\n- Original outbound shipping ch"
+    },
+    {
+      "source_id": "order_tracking_faq-f7dcfd59-3682-4bc0-a1b3-2a3afdf8a49a",
+      "title": "Order Tracking FAQ - What verification is required before sharing order status?",
+      "snippet": "Before the assistant or support agent shares order-specific shipment details, the customer must provide:\n- full name\n- date of birth\n- last 4 digits of SSN\nThis verification step is required to protect customer privacy a"
+    },
+    {
+      "source_id": "order_tracking_faq-8a6c9f2f-266b-4615-aea0-2b6cd3895800",
+      "title": "Order Tracking FAQ - What verification is required before sharing order status?",
+      "snippet": "Before the assistant or support agent shares order-specific shipment details, the customer must provide:\n- full name\n- date of birth\n- last 4 digits of SSN\nThis verification step is required to protect customer privacy a"
+    },
+    {
+      "source_id": "order_tracking_faq-f434643f-c91f-4ea9-890f-3f8600819a09",
+      "title": "Order Tracking FAQ - What happens if the provided verification data does not match?",
+      "snippet": "If the verification details do not match the order records:\n- do not disclose shipment details\n- ask the customer to confirm the information\n- if repeated attempts fail, advise the customer to contact live support for fu"
+    }
+  ],
+  "verification_state": {
+    "status": "not_started",
+    "missing_fields": [],
+    "verified_fields": []
+  },
+  "next_action": "RESPOND"
+}

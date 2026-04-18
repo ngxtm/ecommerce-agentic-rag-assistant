@@ -1,0 +1,15 @@
+{
+  "answer": "Your order ORD-1001 is currently In Transit via UPS. Estimated delivery is 2026-04-20.",
+  "intent": "ORDER_STATUS",
+  "sources": [],
+  "verification_state": {
+    "status": "verified",
+    "missing_fields": [],
+    "verified_fields": [
+      "full_name",
+      "date_of_birth",
+      "ssn_last4"
+    ]
+  },
+  "next_action": "RESPOND"
+}
