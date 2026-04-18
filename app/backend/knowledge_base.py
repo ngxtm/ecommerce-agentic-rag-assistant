@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 from app.backend.llm_client import LLMClientError, generate_chat_completion
 from app.backend.models import SourceItem
@@ -9,6 +10,57 @@ from app.backend.search_client import RetrievedChunk, search_chunks
 
 CONSERVATIVE_FALLBACK = "I do not have enough grounded context in the available documents to answer that confidently yet."
 MIN_RETRIEVAL_SCORE = 0.1
+STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "do",
+    "does",
+    "for",
+    "how",
+    "i",
+    "if",
+    "in",
+    "is",
+    "my",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "what",
+    "when",
+    "where",
+}
+
+
+def _extract_question_keywords(question: str) -> set[str]:
+    tokens = {token for token in re.findall(r"[a-z0-9]+", question.casefold()) if token not in STOPWORDS}
+    normalized = set(tokens)
+    if "return" in tokens:
+        normalized.add("returns")
+    if "returns" in tokens:
+        normalized.add("return")
+    if "refund" in tokens:
+        normalized.add("refunds")
+    if "refunds" in tokens:
+        normalized.add("refund")
+    return normalized
+
+
+def _rerank_chunks(question: str, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    keywords = _extract_question_keywords(question)
+    if not keywords:
+        return chunks
+
+    def rank_key(chunk: RetrievedChunk) -> tuple[float, float]:
+        title_tokens = set(re.findall(r"[a-z0-9]+", chunk.title.casefold()))
+        section_tokens = set(re.findall(r"[a-z0-9]+", chunk.section.casefold()))
+        overlap_score = len(keywords & title_tokens) * 3 + len(keywords & section_tokens) * 2
+        return (overlap_score, chunk.score)
+
+    return sorted(chunks, key=rank_key, reverse=True)
 
 
 def _format_context(chunks: list[RetrievedChunk]) -> str:
@@ -46,7 +98,8 @@ def _build_messages(question: str, context: str) -> list[dict[str, str]]:
 
 def retrieve_relevant_chunks(question: str, top_k: int = 4) -> list[RetrievedChunk]:
     chunks = search_chunks(question, top_k=top_k)
-    return [chunk for chunk in chunks if chunk.score >= MIN_RETRIEVAL_SCORE]
+    relevant_chunks = [chunk for chunk in chunks if chunk.score >= MIN_RETRIEVAL_SCORE]
+    return _rerank_chunks(question, relevant_chunks)
 
 
 def generate_grounded_answer(question: str, chunks: list[RetrievedChunk]) -> str:

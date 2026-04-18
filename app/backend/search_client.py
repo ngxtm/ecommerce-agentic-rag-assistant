@@ -63,11 +63,26 @@ def search_chunks(question: str, top_k: int = 4) -> list[RetrievedChunk]:
     query = {
         "size": top_k,
         "query": {
-            "multi_match": {
-                "query": question,
-                "fields": ["title^3", "section^2", "content"],
-                "type": "best_fields",
-                "operator": "or",
+            "bool": {
+                "should": [
+                    {
+                        "multi_match": {
+                            "query": question,
+                            "fields": ["title^4", "section^3", "content"],
+                            "type": "best_fields",
+                            "operator": "or",
+                        }
+                    },
+                    {
+                        "multi_match": {
+                            "query": question,
+                            "fields": ["title^8", "section^6", "content^2"],
+                            "type": "phrase",
+                            "slop": 1,
+                        }
+                    },
+                ],
+                "minimum_should_match": 1,
             }
         },
     }
