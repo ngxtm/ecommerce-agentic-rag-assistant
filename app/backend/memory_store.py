@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.backend.aws_auth import get_boto3_session
+from app.backend.config import get_aws_region
 from app.backend.models import ConversationMessage, SessionState
 
 
@@ -106,7 +107,7 @@ class InMemorySessionStore:
 class DynamoDBSessionStore:
     def __init__(self, table_name: str, region_name: str | None = None) -> None:
         self._table_name = table_name
-        self._region_name = region_name or os.getenv("AWS_REGION")
+        self._region_name = region_name or get_aws_region()
         session = get_boto3_session(region_name=self._region_name)
         resource = session.resource("dynamodb", region_name=self._region_name)
         self._table = resource.Table(table_name)

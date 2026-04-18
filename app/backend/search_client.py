@@ -7,6 +7,7 @@ from opensearchpy import OpenSearch, RequestsHttpConnection
 from opensearchpy.exceptions import OpenSearchException
 from requests_aws4auth import AWS4Auth
 
+from app.backend.config import get_aws_region
 from app.backend.aws_auth import get_frozen_credentials
 
 
@@ -27,7 +28,7 @@ def _normalize_endpoint(endpoint: str) -> str:
 
 
 def _build_client() -> OpenSearch:
-    region = os.getenv("AWS_REGION")
+    region = get_aws_region()
     endpoint = os.getenv("OPENSEARCH_COLLECTION_ENDPOINT")
     if not region or not endpoint:
         raise ValueError("OpenSearch configuration is incomplete.")

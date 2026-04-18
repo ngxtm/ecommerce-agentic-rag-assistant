@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from dotenv import load_dotenv
 
+from app.backend.config import get_aws_region
 from app.backend.observability import build_log_event
 from app.backend.models import ChatRequest, ChatResponse
 
@@ -33,7 +34,7 @@ logger.info(
             app_env=os.getenv("APP_ENV", "unknown"),
             memory_backend=os.getenv("MEMORY_BACKEND", "inmemory"),
             dynamodb_conversation_table=os.getenv("DYNAMODB_CONVERSATION_TABLE"),
-            aws_region=os.getenv("AWS_REGION"),
+            aws_region=get_aws_region(),
         )
     )
 )
