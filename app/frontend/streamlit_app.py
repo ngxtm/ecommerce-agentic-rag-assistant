@@ -3,8 +3,10 @@ import uuid
 
 import httpx
 import streamlit as st
+from dotenv import load_dotenv
 
 
+load_dotenv()
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://localhost:8000")
 
 
@@ -59,7 +61,27 @@ if prompt:
         if sources:
             lines.append("Sources:")
             for source in sources:
-                lines.append(f"- {source['title']}: {source['snippet']}")
+                detail_parts: list[str] = []
+                if source.get("item"):
+                    detail_parts.append(source["item"])
+                if source.get("subsection"):
+                    detail_parts.append(source["subsection"])
+                page_start = source.get("page_start")
+                page_end = source.get("page_end")
+                if page_start and page_end:
+                    page_label = f"pp. {page_start}-{page_end}" if page_start != page_end else f"p. {page_start}"
+                    detail_parts.append(page_label)
+                metric = source.get("metric")
+                year = source.get("year")
+                if metric and year:
+                    detail_parts.append(f"{metric} ({year})")
+                elif metric:
+                    detail_parts.append(metric)
+                elif year:
+                    detail_parts.append(str(year))
+
+                detail_suffix = f" [{' | '.join(detail_parts)}]" if detail_parts else ""
+                lines.append(f"- {source['title']}{detail_suffix}: {source['snippet']}")
 
         assistant_message = "\n\n".join(lines)
     except httpx.HTTPError as exc:
