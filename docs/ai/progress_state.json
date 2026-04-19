@@ -124,7 +124,7 @@
       "exit_criteria_met": true
     },
     "phase_4_polish_submission": {
-      "status": "not_started",
+      "status": "in_progress",
       "tasks": {
         "finalize_readme": false,
         "add_architecture_screenshots": false,

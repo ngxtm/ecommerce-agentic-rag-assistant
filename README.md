@@ -51,10 +51,23 @@ Phase 3 is a minimum viable cloud deployment for the assignment: deployable, tes
 - Streamlit frontend connected to the backend contract
 - multi-turn order verification workflow with `full_name`, `date_of_birth`, and `ssn_last4`
 - grounded document Q&A through OpenSearch retrieval and OpenAI-compatible generation
+- 10-K-only document ingestion centered on a fixed SEC-style PDF corpus
+- 10-K-aware preprocessing with SEC `PART` / `Item` segmentation, TOC removal, and Item 6 table extraction
 - DynamoDB-backed session and message persistence
 - structured logging and PII-aware observability helpers
 - Terraform-managed Lambda, API Gateway, DynamoDB, S3, IAM, and log group resources
 - GitHub Actions CI and CD support workflows
+
+## Phase 3 Document Pipeline
+- The only Phase 3 demonstration corpus is `docs/company/Company-10k-18pages.pdf`.
+- The indexing pipeline is intentionally optimized for one known SEC-style 10-K family rather than generic PDF ingestion.
+- Retrieval content excludes `Table of Contents` / `INDEX` lines to avoid false hits on the outline instead of the real section text.
+- `section` is mapped to retrieval-friendly SEC labels such as `Item 1. Business`, `Item 1A. Risk Factors`, and `Item 6. Selected Consolidated Financial Data`.
+- Important Item 6 financial data is indexed in two forms:
+  - `table_row` chunks for numeric QA
+  - `table_block` chunks for broader contextual grounding
+- The first iteration keeps structured table handling deliberately narrow: Item 6 is parsed carefully, while lower-priority table-like sections fall back to text blocks.
+- Reindexing removes prior chunks for `doc_id=amazon_10k_2019` before inserting the updated PDF chunks to prevent duplicate search results.
 
 ## Deployment Result
 - Phase 3 backend deployment completed successfully on AWS
@@ -162,8 +175,10 @@ LLM_TIMEOUT_SECONDS=30
 OPENSEARCH_COLLECTION_ENDPOINT=<aoss-endpoint>
 OPENSEARCH_INDEX_NAME=policy-faq-chunks
 DOCS_S3_BUCKET=<docs-bucket>
-DOCS_S3_PREFIX=phase1-kb/
+DOCS_S3_PREFIX=
 ```
+
+`DOCS_S3_PREFIX` is optional. Leave it empty or unset when the source document lives at the bucket root. Set it only when the document key is stored under a prefix such as `filings/`.
 
 ### 4. Run the backend
 ```powershell

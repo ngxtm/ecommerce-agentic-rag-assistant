@@ -39,9 +39,9 @@
     "frontend": "Streamlit",
     "api_entry": "Amazon API Gateway",
     "orchestrator": "AWS Lambda",
-    "rag": "Amazon Bedrock Knowledge Bases",
+    "rag": "Target: Amazon Bedrock Knowledge Bases; deployed fallback: Amazon OpenSearch Serverless retrieval plus OpenAI-compatible generation",
     "document_store": "Amazon S3",
-    "vector_store": "S3 Vectors",
+    "vector_store": "Target: S3 Vectors; deployed fallback uses OpenSearch Serverless",
     "order_tool": "AWS Lambda mock order status service",
     "memory": "DynamoDB",
     "observability": [
@@ -57,7 +57,7 @@
   },
   "non_goals": [
     "Do not redesign the stack from scratch",
-    "Do not use OpenSearch Serverless for MVP unless forced",
+    "Do not replace the deployed OpenSearch fallback path during submission polish",
     "Do not overbuild UI",
     "Do not build a complex multi-agent system",
     "Do not prioritize optional preprocessing over core requirements"

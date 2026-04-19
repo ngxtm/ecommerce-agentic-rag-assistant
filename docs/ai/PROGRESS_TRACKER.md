@@ -187,7 +187,7 @@ Exit criteria:
 ---
 
 ### Phase 4 - Polish and Submission Prep
-**Status:** Not started
+**Status:** In progress
 
 Tasks:
 - [ ] Finalize README
