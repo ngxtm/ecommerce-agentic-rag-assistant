@@ -34,13 +34,40 @@ def _extract_content(response_json: dict[str, Any]) -> str:
     return ""
 
 
-def generate_chat_completion(messages: list[dict[str, str]]) -> str:
+def _request_openai_compatible(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     api_key = os.getenv("LLM_API_KEY")
     base_url = os.getenv("LLM_BASE_URL")
-    model = os.getenv("LLM_MODEL")
     timeout_seconds = float(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
 
-    if not api_key or not base_url or not model:
+    if not api_key or not base_url:
+        raise ValueError("OpenAI-compatible LLM configuration is incomplete.")
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    url = f"{_normalize_base_url(base_url)}/{path}"
+
+    try:
+        with httpx.Client(timeout=timeout_seconds) as client:
+            response = client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise LLMClientError(f"OpenAI-compatible request to {path} failed.") from exc
+
+    try:
+        response_json = response.json()
+    except ValueError as exc:
+        raise LLMClientError(f"OpenAI-compatible response from {path} was not valid JSON.") from exc
+
+    if not isinstance(response_json, dict):
+        raise LLMClientError(f"OpenAI-compatible response from {path} was not a JSON object.")
+    return response_json
+
+
+def generate_chat_completion(messages: list[dict[str, str]]) -> str:
+    model = os.getenv("LLM_MODEL")
+    if not model:
         raise ValueError("OpenAI-compatible LLM configuration is incomplete.")
 
     payload = {
@@ -49,25 +76,52 @@ def generate_chat_completion(messages: list[dict[str, str]]) -> str:
         "temperature": 0,
         "max_tokens": 350,
     }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    url = f"{_normalize_base_url(base_url)}/chat/completions"
-
-    try:
-        with httpx.Client(timeout=timeout_seconds) as client:
-            response = client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-    except httpx.HTTPError as exc:
-        raise LLMClientError("OpenAI-compatible chat completion request failed.") from exc
-
-    try:
-        response_json = response.json()
-    except ValueError as exc:
-        raise LLMClientError("OpenAI-compatible chat completion response was not valid JSON.") from exc
-
+    response_json = _request_openai_compatible("chat/completions", payload)
     content = _extract_content(response_json)
     if not content:
         raise LLMClientError("OpenAI-compatible chat completion response did not contain usable content.")
     return content
+
+
+def generate_embedding(text: str) -> list[float]:
+    model = os.getenv("LLM_EMBEDDING_MODEL") or os.getenv("LLM_MODEL")
+    if not model:
+        raise ValueError("OpenAI-compatible embedding configuration is incomplete.")
+
+    payload = {
+        "model": model,
+        "input": text,
+    }
+    response_json = _request_openai_compatible("embeddings", payload)
+    data = response_json.get("data")
+    if not isinstance(data, list) or not data:
+        raise LLMClientError("OpenAI-compatible embedding response did not contain data.")
+    embedding = data[0].get("embedding") if isinstance(data[0], dict) else None
+    if not isinstance(embedding, list) or not embedding:
+        raise LLMClientError("OpenAI-compatible embedding response did not contain a usable vector.")
+    return [float(value) for value in embedding]
+
+
+def generate_embeddings(texts: list[str]) -> list[list[float]]:
+    if not texts:
+        return []
+    model = os.getenv("LLM_EMBEDDING_MODEL") or os.getenv("LLM_MODEL")
+    if not model:
+        raise ValueError("OpenAI-compatible embedding configuration is incomplete.")
+
+    payload = {
+        "model": model,
+        "input": texts,
+    }
+    response_json = _request_openai_compatible("embeddings", payload)
+    data = response_json.get("data")
+    if not isinstance(data, list) or not data:
+        raise LLMClientError("OpenAI-compatible embedding response did not contain data.")
+
+    ordered_vectors: list[list[float]] = []
+    for item in sorted((entry for entry in data if isinstance(entry, dict)), key=lambda entry: int(entry.get("index", 0))):
+        embedding = item.get("embedding")
+        if not isinstance(embedding, list) or not embedding:
+            raise LLMClientError("OpenAI-compatible embedding response did not contain a usable vector.")
+        ordered_vectors.append([float(value) for value in embedding])
+    return ordered_vectors

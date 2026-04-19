@@ -39,6 +39,13 @@ class SourceItem(BaseModel):
     source_id: str
     title: str
     snippet: str
+    item: str | None = None
+    subsection: str | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    metric: str | None = None
+    year: str | None = None
+    table_name: str | None = None
 
 
 class VerificationState(BaseModel):
