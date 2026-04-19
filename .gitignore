@@ -6,6 +6,7 @@ __pycache__/
 .streamlit/
 artifacts/
 build/
+.claude/
 .terraform/
 *.tfstate
 *.tfstate.*
