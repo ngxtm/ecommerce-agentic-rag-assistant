@@ -24,8 +24,6 @@ def _get_messages() -> list[dict[str, str]]:
 
 st.set_page_config(page_title="Agentic Commerce Assistant", page_icon=":speech_balloon:")
 st.title("Agentic Commerce Assistant")
-st.caption("Phase 1 local UI for knowledge Q&A and order-status verification")
-st.info("For order verification, use date of birth in DD-MM-YYYY format.")
 
 session_id = st.text_input("Session ID", value=_get_session_id())
 messages = _get_messages()
