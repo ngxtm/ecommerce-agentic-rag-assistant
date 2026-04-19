@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Iterator
 
-from app.backend.llm_client import LLMClientError, generate_chat_completion
+from app.backend.llm_client import LLMClientError, generate_chat_completion, generate_chat_completion_stream
 from app.backend.models import SourceItem
 from app.backend.search_client import RetrievedChunk, search_chunks
 
@@ -191,6 +192,17 @@ def retrieve_relevant_chunks(question: str, top_k: int = 4) -> list[RetrievedChu
 def generate_grounded_answer(question: str, chunks: list[RetrievedChunk]) -> str:
     answer = generate_chat_completion(_build_messages(question, _format_context(chunks)))
     return answer or CONSERVATIVE_FALLBACK
+
+
+def generate_grounded_answer_stream(question: str, chunks: list[RetrievedChunk]) -> Iterator[str]:
+    yield from generate_chat_completion_stream(_build_messages(question, _format_context(chunks)))
+
+
+def stream_answer_question(question: str) -> tuple[Iterator[str], list[SourceItem]]:
+    chunks = retrieve_relevant_chunks(question)
+    if not chunks:
+        return iter([CONSERVATIVE_FALLBACK]), []
+    return generate_grounded_answer_stream(question, chunks), _build_sources(chunks)
 
 
 def _build_source_title(chunk: RetrievedChunk) -> str:

@@ -17,6 +17,8 @@ VECTOR_FIELD = "embedding"
 LEXICAL_CANDIDATE_MULTIPLIER = 3
 VECTOR_CANDIDATE_MULTIPLIER = 3
 MIN_VECTOR_DIMENSIONS = 8
+LEXICAL_WEIGHT = 0.8
+VECTOR_WEIGHT = 0.2
 
 
 @dataclass
@@ -247,21 +249,41 @@ def _run_vector_search(client: OpenSearch, index_name: str, question: str, top_k
     return chunks[: max(top_k * VECTOR_CANDIDATE_MULTIPLIER, top_k)]
 
 
+def _normalize_scores(chunks: list[RetrievedChunk], attr_name: str) -> dict[str, float]:
+    if not chunks:
+        return {}
+    values = [getattr(chunk, attr_name) for chunk in chunks]
+    minimum = min(values)
+    maximum = max(values)
+    if maximum <= minimum:
+        return {chunk.chunk_id: (1.0 if maximum > 0 else 0.0) for chunk in chunks}
+    return {
+        chunk.chunk_id: (getattr(chunk, attr_name) - minimum) / (maximum - minimum)
+        for chunk in chunks
+    }
+
+
 def _merge_candidates(lexical_chunks: list[RetrievedChunk], vector_chunks: list[RetrievedChunk], top_k: int) -> list[RetrievedChunk]:
     merged: dict[str, RetrievedChunk] = {}
     for chunk in lexical_chunks + vector_chunks:
         existing = merged.get(chunk.chunk_id)
         if existing is None:
             merged[chunk.chunk_id] = chunk
-            merged[chunk.chunk_id].score = chunk.lexical_score + chunk.vector_score
             continue
         existing.lexical_score = max(existing.lexical_score, chunk.lexical_score)
         existing.vector_score = max(existing.vector_score, chunk.vector_score)
-        existing.score = existing.lexical_score + existing.vector_score
         if existing.embedding is None and chunk.embedding is not None:
             existing.embedding = chunk.embedding
+
+    merged_chunks = list(merged.values())
+    lexical_norm = _normalize_scores(merged_chunks, "lexical_score")
+    vector_norm = _normalize_scores(merged_chunks, "vector_score")
+
+    for chunk in merged_chunks:
+        chunk.score = lexical_norm.get(chunk.chunk_id, 0.0) * LEXICAL_WEIGHT + vector_norm.get(chunk.chunk_id, 0.0) * VECTOR_WEIGHT
+
     return sorted(
-        merged.values(),
+        merged_chunks,
         key=lambda chunk: (chunk.score, chunk.lexical_score, chunk.vector_score),
         reverse=True,
     )[: max(top_k * 2, top_k)]

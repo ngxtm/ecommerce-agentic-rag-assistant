@@ -1,6 +1,12 @@
 from unittest.mock import Mock, patch
 
-from app.backend.knowledge_base import CONSERVATIVE_FALLBACK, answer_question, generate_grounded_answer, retrieve_relevant_chunks
+from app.backend.knowledge_base import (
+    CONSERVATIVE_FALLBACK,
+    answer_question,
+    generate_grounded_answer,
+    retrieve_relevant_chunks,
+    stream_answer_question,
+)
 from app.backend.llm_client import LLMClientError
 from app.backend.search_client import RetrievedChunk
 
@@ -108,6 +114,110 @@ def test_answer_question_returns_fallback_when_runtime_fails(mock_retrieve: Mock
 
 @patch("app.backend.knowledge_base.generate_chat_completion")
 def test_answer_question_returns_fallback_when_generation_returns_empty(mock_generate_chat_completion: Mock) -> None:
+    mock_generate_chat_completion.return_value = ""
+
+    answer = generate_grounded_answer("When is tracking available?", [_sample_chunk()])
+
+    assert answer == CONSERVATIVE_FALLBACK
+
+
+@patch("app.backend.knowledge_base.search_chunks")
+def test_retrieve_relevant_chunks_prefers_table_rows_for_numeric_questions(mock_search_chunks: Mock) -> None:
+    mock_search_chunks.return_value = [_sample_chunk(), _table_block_chunk(), _table_row_chunk()]
+
+    chunks = retrieve_relevant_chunks("What were net sales in 2019?")
+
+    assert chunks[0].content_type == "table_row"
+    assert chunks[0].metric == "Net sales"
+    assert chunks[0].year == "2019"
+
+
+@patch("app.backend.knowledge_base.search_chunks")
+def test_retrieve_relevant_chunks_prefers_narrative_for_narrative_questions(mock_search_chunks: Mock) -> None:
+    narrative = RetrievedChunk(
+        chunk_id="chunk-2",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 1A. Risk Factors",
+        content="We face intense competition across lines of business.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=4.5,
+        item="Item 1A. Risk Factors",
+        content_type="narrative",
+        subsection="We Face Intense Competition",
+    )
+    mock_search_chunks.return_value = [_table_row_chunk(score=4.0), _table_block_chunk(score=4.4), narrative]
+
+    chunks = retrieve_relevant_chunks("What does the report say about competition?")
+
+    assert chunks[0].content_type == "narrative"
+    assert chunks[0].section == "Item 1A. Risk Factors"
+
+
+@patch("app.backend.knowledge_base.generate_grounded_answer")
+@patch("app.backend.knowledge_base.retrieve_relevant_chunks")
+def test_answer_question_returns_structured_table_source(mock_retrieve: Mock, mock_generate: Mock) -> None:
+    mock_retrieve.return_value = [_table_row_chunk()]
+    mock_generate.return_value = "Net sales were 280,522 in 2019."
+
+    answer, sources = answer_question("What were net sales in 2019?")
+
+    assert "280,522" in answer
+    assert len(sources) == 1
+    assert sources[0].title == "Item 6. Selected Consolidated Financial Data - Net sales (2019)"
+    assert sources[0].metric == "Net sales"
+    assert sources[0].year == "2019"
+
+
+@patch("app.backend.knowledge_base.generate_grounded_answer_stream")
+@patch("app.backend.knowledge_base.retrieve_relevant_chunks")
+def test_stream_answer_question_returns_stream_and_sources(mock_retrieve: Mock, mock_stream: Mock) -> None:
+    mock_retrieve.return_value = [_table_row_chunk()]
+    mock_stream.return_value = iter(["Net sales ", "were 280,522 in 2019."])
+
+    answer_stream, sources = stream_answer_question("What were net sales in 2019?")
+
+    assert "".join(answer_stream) == "Net sales were 280,522 in 2019."
+    assert len(sources) == 1
+    assert sources[0].metric == "Net sales"
+    assert sources[0].year == "2019"
+
+
+@patch("app.backend.knowledge_base.retrieve_relevant_chunks")
+def test_stream_answer_question_returns_fallback_when_no_chunks(mock_retrieve: Mock) -> None:
+    mock_retrieve.return_value = []
+
+    answer_stream, sources = stream_answer_question("Question without support")
+
+    assert "".join(answer_stream) == CONSERVATIVE_FALLBACK
+    assert sources == []
+
+
+@patch("app.backend.knowledge_base.generate_grounded_answer_stream")
+@patch("app.backend.knowledge_base.retrieve_relevant_chunks")
+def test_stream_answer_question_propagates_stream_failures(mock_retrieve: Mock, mock_stream: Mock) -> None:
+    def failing_stream():
+        yield "partial"
+        raise LLMClientError("stream failed")
+
+    mock_retrieve.return_value = [_sample_chunk()]
+    mock_stream.return_value = failing_stream()
+
+    answer_stream, sources = stream_answer_question("What does the business focus on?")
+
+    assert sources[0].source_id == "chunk-1"
+    iterator = iter(answer_stream)
+    assert next(iterator) == "partial"
+    try:
+        next(iterator)
+        assert False, "Expected stream failure"
+    except LLMClientError:
+        pass
+
+
+@patch("app.backend.knowledge_base.generate_chat_completion")
+def test_generate_grounded_answer_returns_fallback_when_generation_returns_empty(mock_generate_chat_completion: Mock) -> None:
     mock_generate_chat_completion.return_value = ""
 
     answer = generate_grounded_answer("When is tracking available?", [_sample_chunk()])

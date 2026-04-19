@@ -5,7 +5,8 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 
 from app.backend.config import get_aws_region
@@ -16,7 +17,7 @@ from app.backend.models import ChatRequest, ChatResponse
 ROOT_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT_DIR / ".env")
 
-from app.backend.orchestrator import handle_chat
+from app.backend.orchestrator import StreamingIntentError, ensure_streaming_allowed, handle_chat, stream_chat
 
 
 logging.basicConfig(
@@ -66,3 +67,17 @@ def chat(request: ChatRequest) -> ChatResponse:
         )
     )
     return response
+
+
+@app.post("/chat/stream")
+def chat_stream(request: ChatRequest) -> StreamingResponse:
+    try:
+        ensure_streaming_allowed(request)
+    except StreamingIntentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return StreamingResponse(stream_chat(request), media_type="text/event-stream")
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}

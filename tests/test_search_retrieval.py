@@ -1,6 +1,6 @@
 from unittest.mock import Mock, patch
 
-from app.backend.search_client import search_chunks
+from app.backend.search_client import RetrievedChunk, _merge_candidates, search_chunks
 
 
 @patch("app.backend.search_client._build_client")
@@ -34,7 +34,7 @@ def test_search_chunks_returns_normalized_hits(mock_getenv: Mock, mock_build_cli
 
     assert len(chunks) == 1
     assert chunks[0].title == "Amazon.com, Inc. Form 10-K"
-    assert chunks[0].score == 4.2
+    assert chunks[0].score > 0
     assert chunks[0].doc_id == "amazon_10k_2019"
     assert chunks[0].embedding is not None
 
@@ -93,3 +93,107 @@ def test_search_chunks_returns_empty_when_no_hits(mock_getenv: Mock, mock_build_
     mock_build_client.return_value = mock_client
 
     assert search_chunks("unknown question") == []
+
+
+def test_merge_candidates_keeps_exact_lexical_match_above_semantic_neighbor() -> None:
+    exact_match = RetrievedChunk(
+        chunk_id="exact-net-sales-2019",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 6. Selected Consolidated Financial Data",
+        content="Net sales for 2019: 280,522",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=9.0,
+        lexical_score=9.0,
+        vector_score=0.2,
+        content_type="table_row",
+        metric="Net sales",
+        year="2019",
+    )
+    semantic_neighbor = RetrievedChunk(
+        chunk_id="semantic-sales-growth",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 7. Management Discussion and Analysis",
+        content="Revenue continued to grow significantly in 2019.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=0.8,
+        lexical_score=1.5,
+        vector_score=0.9,
+        content_type="narrative",
+    )
+
+    merged = _merge_candidates([exact_match], [semantic_neighbor], top_k=2)
+
+    assert merged[0].chunk_id == "exact-net-sales-2019"
+    assert merged[0].score > merged[1].score
+
+
+def test_merge_candidates_falls_back_to_lexical_only_when_no_vector_scores_exist() -> None:
+    stronger_lexical = RetrievedChunk(
+        chunk_id="item-6",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 6. Selected Consolidated Financial Data",
+        content="Item 6 summary",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=7.0,
+        lexical_score=7.0,
+        vector_score=0.0,
+    )
+    weaker_lexical = RetrievedChunk(
+        chunk_id="item-7",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 7. Management Discussion and Analysis",
+        content="Item 7 summary",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=3.0,
+        lexical_score=3.0,
+        vector_score=0.0,
+    )
+
+    merged = _merge_candidates([stronger_lexical, weaker_lexical], [], top_k=2)
+
+    assert merged[0].chunk_id == "item-6"
+    assert merged[1].chunk_id == "item-7"
+    assert merged[0].score >= merged[1].score
+
+
+def test_merge_candidates_combines_lexical_and_vector_scores_per_chunk() -> None:
+    lexical = RetrievedChunk(
+        chunk_id="combined-chunk",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 6. Selected Consolidated Financial Data",
+        content="Net sales for 2019: 280,522",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=8.0,
+        lexical_score=8.0,
+        vector_score=0.0,
+    )
+    vector = RetrievedChunk(
+        chunk_id="combined-chunk",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 6. Selected Consolidated Financial Data",
+        content="Net sales for 2019: 280,522",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=0.9,
+        lexical_score=0.0,
+        vector_score=0.9,
+    )
+
+    merged = _merge_candidates([lexical], [vector], top_k=1)
+
+    assert len(merged) == 1
+    assert merged[0].lexical_score == 8.0
+    assert merged[0].vector_score == 0.9
+    assert merged[0].score > 0
+    assert merged[0].chunk_id == "combined-chunk"

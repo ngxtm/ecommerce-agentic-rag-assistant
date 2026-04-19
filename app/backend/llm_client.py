@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -81,6 +83,75 @@ def generate_chat_completion(messages: list[dict[str, str]]) -> str:
     if not content:
         raise LLMClientError("OpenAI-compatible chat completion response did not contain usable content.")
     return content
+
+
+def _extract_stream_delta(payload: dict[str, Any]) -> str:
+    choices = payload.get("choices", [])
+    if not choices:
+        return ""
+
+    delta = choices[0].get("delta", {})
+    if isinstance(delta, dict):
+        content = delta.get("content", "")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            texts: list[str] = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text" and item.get("text"):
+                    texts.append(str(item["text"]))
+                elif isinstance(item, str):
+                    texts.append(item)
+            return "".join(texts)
+    return ""
+
+
+def generate_chat_completion_stream(messages: list[dict[str, str]]) -> Iterator[str]:
+    model = os.getenv("LLM_MODEL")
+    base_url = os.getenv("LLM_BASE_URL")
+    api_key = os.getenv("LLM_API_KEY")
+    timeout_seconds = float(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
+    if not model or not base_url or not api_key:
+        raise ValueError("OpenAI-compatible LLM configuration is incomplete.")
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0,
+        "max_tokens": 350,
+        "stream": True,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    url = f"{_normalize_base_url(base_url)}/chat/completions"
+
+    try:
+        with httpx.Client(timeout=timeout_seconds) as client:
+            with client.stream("POST", url, headers=headers, json=payload) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    if isinstance(line, bytes):
+                        line = line.decode("utf-8")
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data or data == "[DONE]":
+                        continue
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError as exc:
+                        raise LLMClientError("OpenAI-compatible chat completion stream returned invalid JSON.") from exc
+                    if not isinstance(chunk, dict):
+                        continue
+                    delta = _extract_stream_delta(chunk)
+                    if delta:
+                        yield delta
+    except httpx.HTTPError as exc:
+        raise LLMClientError("OpenAI-compatible streaming chat completion request failed.") from exc
 
 
 def generate_embedding(text: str) -> list[float]:
