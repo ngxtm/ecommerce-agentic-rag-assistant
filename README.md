@@ -200,6 +200,49 @@ pytest
 .venv\Scripts\python.exe scripts/index_sample_docs.py
 ```
 
+## Frontend Deployment with Dokploy
+Use this path when the backend is already deployed and you want to publish the Streamlit UI at `rag.ngxtm.site` from your VPS.
+
+### 1. Build from the frontend Dockerfile
+Use `Dockerfile.frontend` as the Dokploy build target.
+
+### 2. Configure the frontend environment
+Set the Dokploy environment variable:
+
+```env
+BACKEND_BASE_URL=<deployed-backend-url>
+```
+
+### 3. Use the Streamlit start command
+The container starts Streamlit automatically with:
+
+```bash
+streamlit run app/frontend/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+```
+
+If you are not using the Dockerfile, you can still install frontend-only dependencies manually with:
+
+```powershell
+pip install -r requirements-frontend.txt
+```
+
+### 4. Map the Dokploy app to `rag.ngxtm.site`
+- point the domain or subdomain to the VPS
+- keep the app port and Dokploy domain mapping aligned on `8501`
+- enable TLS in Dokploy
+
+### 5. Troubleshoot reverse proxy and WebSocket issues first
+Streamlit depends on WebSocket support behind the reverse proxy. If the page loads partially, hangs, or behaves differently remotely than it does locally:
+- check Dokploy domain and port mapping first
+- inspect reverse proxy handling for WebSocket traffic
+- try this start command to rule out WebSocket compression issues:
+
+```bash
+streamlit run app/frontend/streamlit_app.py --server.port 8501 --server.address 0.0.0.0 --server.enableWebsocketCompression=false
+```
+
+Browser CORS is usually not the issue here because the Streamlit app calls the backend through server-side `httpx`.
+
 ## Deployment Steps
 ### 1. Package the Lambda artifact
 ```powershell
