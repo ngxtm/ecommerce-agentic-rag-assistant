@@ -111,9 +111,38 @@ variable "docs_s3_prefix" {
   default     = "phase1-kb/"
 }
 
-variable "opensearch_collection_endpoint" {
-  description = "OpenSearch Serverless collection endpoint used by the fallback deployed architecture."
+variable "opensearch_collection_name" {
+  description = "OpenSearch Serverless collection name managed by Terraform."
   type        = string
+}
+
+variable "opensearch_collection_type" {
+  description = "OpenSearch Serverless collection type."
+  type        = string
+  default     = "SEARCH"
+
+  validation {
+    condition     = contains(["SEARCH", "TIMESERIES", "VECTORSEARCH"], var.opensearch_collection_type)
+    error_message = "opensearch_collection_type must be SEARCH, TIMESERIES, or VECTORSEARCH."
+  }
+}
+
+variable "opensearch_allow_public_access" {
+  description = "Allow public network access to the OpenSearch Serverless collection."
+  type        = bool
+  default     = true
+}
+
+variable "opensearch_additional_principal_arns" {
+  description = "Additional IAM principal ARNs allowed to access the OpenSearch Serverless collection for local indexing or admin operations."
+  type        = list(string)
+  default     = []
+}
+
+variable "opensearch_local_iam_user_names" {
+  description = "IAM user names that should also receive identity-based AOSS API permissions for local indexing workflows."
+  type        = list(string)
+  default     = []
 }
 
 variable "opensearch_index_name" {

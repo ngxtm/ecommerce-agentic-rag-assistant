@@ -39,7 +39,7 @@ jobs:
       AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
       TF_VAR_llm_api_key: ${{ secrets.TF_VAR_llm_api_key }}
       TF_VAR_docs_bucket_name: ${{ vars.TF_VAR_docs_bucket_name }}
-      TF_VAR_opensearch_collection_endpoint: ${{ vars.TF_VAR_opensearch_collection_endpoint }}
+      TF_VAR_opensearch_collection_name: ${{ vars.TF_VAR_opensearch_collection_name || 'agentic-commerce-knowledge-dev' }}
 
     steps:
       - name: Check out repository
@@ -53,7 +53,7 @@ jobs:
           [[ -z "$AWS_SECRET_ACCESS_KEY" ]] && missing+=("AWS_SECRET_ACCESS_KEY")
           [[ -z "$TF_VAR_llm_api_key" ]] && missing+=("TF_VAR_llm_api_key")
           [[ -z "$TF_VAR_docs_bucket_name" ]] && missing+=("TF_VAR_docs_bucket_name")
-          [[ -z "$TF_VAR_opensearch_collection_endpoint" ]] && missing+=("TF_VAR_opensearch_collection_endpoint")
+          [[ -z "$TF_VAR_opensearch_collection_name" ]] && missing+=("TF_VAR_opensearch_collection_name")
 
           if (( ${#missing[@]} > 0 )); then
             echo "Missing required GitHub Actions secrets/variables: ${missing[*]}" >&2
@@ -91,7 +91,9 @@ jobs:
           TF_VAR_docs_bucket_name: ${{ env.TF_VAR_docs_bucket_name }}
           TF_VAR_create_docs_bucket: ${{ vars.TF_VAR_create_docs_bucket || 'false' }}
           TF_VAR_docs_s3_prefix: ${{ vars.TF_VAR_docs_s3_prefix || 'phase1-kb/' }}
-          TF_VAR_opensearch_collection_endpoint: ${{ env.TF_VAR_opensearch_collection_endpoint }}
+          TF_VAR_opensearch_collection_name: ${{ env.TF_VAR_opensearch_collection_name }}
+          TF_VAR_opensearch_collection_type: ${{ vars.TF_VAR_opensearch_collection_type || 'SEARCH' }}
+          TF_VAR_opensearch_allow_public_access: ${{ vars.TF_VAR_opensearch_allow_public_access || 'true' }}
           TF_VAR_opensearch_index_name: ${{ vars.TF_VAR_opensearch_index_name || 'policy-faq-chunks' }}
           TF_VAR_llm_provider: ${{ vars.TF_VAR_llm_provider || 'openai_compatible' }}
           TF_VAR_llm_api_key: ${{ env.TF_VAR_llm_api_key }}

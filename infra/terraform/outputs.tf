@@ -22,3 +22,23 @@ output "aws_region" {
   description = "AWS region used by this deployment."
   value       = var.aws_region
 }
+
+output "opensearch_collection_name" {
+  description = "OpenSearch Serverless collection name used by the deployed backend."
+  value       = aws_opensearchserverless_collection.knowledge.name
+}
+
+output "opensearch_collection_arn" {
+  description = "ARN of the OpenSearch Serverless collection."
+  value       = aws_opensearchserverless_collection.knowledge.arn
+}
+
+output "opensearch_collection_endpoint" {
+  description = "Collection endpoint for OpenSearch Serverless."
+  value       = aws_opensearchserverless_collection.knowledge.collection_endpoint
+}
+
+output "opensearch_dashboard_endpoint" {
+  description = "Dashboard endpoint for OpenSearch Serverless."
+  value       = aws_opensearchserverless_collection.knowledge.dashboard_endpoint
+}

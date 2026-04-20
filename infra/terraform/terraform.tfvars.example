@@ -21,7 +21,15 @@ create_docs_bucket        = false
 docs_bucket_name          = "your-existing-docs-bucket"
 docs_s3_prefix            = "phase1-kb/"
 
-opensearch_collection_endpoint = "https://your-aoss-endpoint"
+opensearch_collection_name     = "agentic-commerce-knowledge-dev"
+opensearch_collection_type     = "SEARCH"
+opensearch_allow_public_access = true
+opensearch_additional_principal_arns = [
+  "arn:aws:iam::123456789012:user/your-local-user",
+]
+opensearch_local_iam_user_names = [
+  "your-local-user",
+]
 opensearch_index_name          = "policy-faq-chunks"
 
 llm_provider              = "openai_compatible"

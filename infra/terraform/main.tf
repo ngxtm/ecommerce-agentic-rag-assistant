@@ -18,7 +18,7 @@ locals {
     DYNAMODB_CONVERSATION_TABLE    = aws_dynamodb_table.conversation.name
     DOCS_S3_BUCKET                 = local.docs_bucket_name
     DOCS_S3_PREFIX                 = var.docs_s3_prefix
-    OPENSEARCH_COLLECTION_ENDPOINT = var.opensearch_collection_endpoint
+    OPENSEARCH_COLLECTION_ENDPOINT = aws_opensearchserverless_collection.knowledge.collection_endpoint
     OPENSEARCH_INDEX_NAME          = var.opensearch_index_name
     LLM_PROVIDER                   = var.llm_provider
     LLM_API_KEY                    = var.llm_api_key

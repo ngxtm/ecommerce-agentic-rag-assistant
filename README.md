@@ -104,7 +104,7 @@ Terraform variables are the infrastructure inputs. Lambda environment variables 
 
 Examples:
 - `TF_VAR_llm_api_key` -> Lambda env `LLM_API_KEY`
-- `TF_VAR_opensearch_collection_endpoint` -> Lambda env `OPENSEARCH_COLLECTION_ENDPOINT`
+- `TF_VAR_opensearch_collection_name` -> Terraform-managed AOSS collection -> Lambda env `OPENSEARCH_COLLECTION_ENDPOINT`
 - `TF_VAR_docs_bucket_name` -> Lambda env `DOCS_S3_BUCKET`
 
 ## Deployment Defaults
@@ -254,6 +254,12 @@ Copy `infra/terraform/terraform.tfvars.example` to `infra/terraform/terraform.tf
 
 Do not commit a real `llm_api_key` into Terraform files. Provide it through a local non-committed tfvars file or shell input such as `TF_VAR_llm_api_key`.
 
+Terraform now creates the OpenSearch Serverless collection directly. Set `opensearch_collection_name` instead of pasting a pre-created endpoint.
+
+If you run `scripts/index_sample_docs.py` from your local machine, add your local IAM user or IAM role ARN to `opensearch_additional_principal_arns` so the AOSS data access policy also trusts that principal.
+
+If you use an IAM user for local indexing, also add that user name to `opensearch_local_iam_user_names` so Terraform grants the required identity-based `aoss:APIAccessAll` permission in addition to the AOSS data access policy.
+
 ### 3. Initialize and validate Terraform
 ```powershell
 terraform -chdir=infra/terraform init
@@ -273,6 +279,8 @@ terraform -chdir=infra/terraform output -json
 ```
 
 The deployed `api_url` is captured in `evidence/phase3/terraform-output.json` and can be exported to the frontend through `BACKEND_BASE_URL`.
+
+The same Terraform outputs also include the OpenSearch collection endpoint and dashboard endpoint used by the Lambda runtime and the indexing script.
 
 ## Verification Steps
 Order verification DOB input must use `DD-MM-YYYY`.
@@ -329,8 +337,17 @@ curl -X POST <API_URL>/chat ^
 ### 5. Verify OpenSearch connectivity
 If knowledge retrieval fails after deployment, verify all three of the following:
 - the Lambda role permissions allow signed AOSS requests
-- the AOSS data access policy trusts the Lambda role principal
-- the deployed `OPENSEARCH_COLLECTION_ENDPOINT` value is correct
+- the Terraform-managed AOSS data access policy trusts the Lambda role principal
+- the deployed `opensearch_collection_endpoint` output matches the collection created by Terraform
+
+### 6. Index sample docs into the Terraform-managed collection
+After `terraform apply`, run:
+
+```powershell
+.venv\Scripts\python.exe scripts/index_sample_docs.py
+```
+
+The script now creates the OpenSearch index with an explicit mapping when it is missing, then refreshes and indexes the sample documents.
 
 ## Demo Flow
 1. Show the deployment result and evidence index
