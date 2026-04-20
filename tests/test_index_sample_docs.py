@@ -15,16 +15,21 @@ from scripts.index_sample_docs import (
     _build_chunk_id,
     _build_document_skeleton,
     _build_pdf_documents,
+    _business_refiner,
     _clean_pdf_line,
     _count_documents_by_doc_id,
     _delete_existing_doc_chunks,
     _doc_id_exists,
     _ensure_index,
     _executive_refiner,
+    _item8_refiner,
+    _legal_proceedings_refiner,
     _mapping_supports_doc_id_keyword,
+    _market_risk_refiner,
     _mda_refiner,
     _normalize_pdf_lines,
     _overview_refiner,
+    _properties_refiner,
     _remove_toc_pages,
     _extract_risk_sections_from_text,
     _risk_factor_refiner,
@@ -151,6 +156,108 @@ def test_mda_refiner_materializes_subsections() -> None:
     assert any(entry.subsection == "Liquidity and Capital Resources" for entry in refined)
 
 
+def test_business_refiner_materializes_subsections_and_facts() -> None:
+    block = DocumentBlock(
+        part="PART I",
+        item="Item 1. Business",
+        label="Item 1. Business",
+        lines=[
+            NormalizedLine(3, "Overview", "", 0),
+            NormalizedLine(3, "We serve consumers through our online and physical stores.", "", 1),
+            NormalizedLine(3, "We focus on low prices, selection, and convenience.", "", 2),
+            NormalizedLine(4, "Amazon Web Services", "", 3),
+            NormalizedLine(4, "We serve developers and enterprises with on-demand technology services.", "", 4),
+        ],
+        page_start=3,
+        page_end=4,
+    )
+
+    refined = _business_refiner(block)
+
+    assert any(entry.subsection == "Overview" and entry.block_type == "narrative" for entry in refined)
+    assert any(entry.subsection == "Overview" and entry.block_type == "fact" for entry in refined)
+    assert any(entry.subsection == "Amazon Web Services" for entry in refined)
+
+
+def test_properties_refiner_extracts_facilities_facts() -> None:
+    block = DocumentBlock(
+        part="PART I",
+        item="Item 2. Properties",
+        label="Item 2. Properties",
+        lines=[
+            NormalizedLine(6, "Properties", "", 0),
+            NormalizedLine(6, "We operate offices, fulfillment centers, sortation centers, and data centers worldwide.", "", 1),
+        ],
+        page_start=6,
+        page_end=6,
+    )
+
+    refined = _properties_refiner(block)
+
+    assert any(entry.block_type == "fact" for entry in refined)
+    assert any(entry.subsection == "Properties" for entry in refined)
+
+
+def test_legal_proceedings_refiner_keeps_legal_narrative_grounded() -> None:
+    block = DocumentBlock(
+        part="PART I",
+        item="Item 3. Legal Proceedings",
+        label="Item 3. Legal Proceedings",
+        lines=[
+            NormalizedLine(7, "Legal Proceedings", "", 0),
+            NormalizedLine(7, "From time to time, we are involved in legal proceedings and claims arising in the ordinary course of business.", "", 1),
+        ],
+        page_start=7,
+        page_end=7,
+    )
+
+    refined = _legal_proceedings_refiner(block)
+
+    assert any(entry.block_type == "fact" for entry in refined)
+    assert any(entry.subsection == "Legal Proceedings" for entry in refined)
+
+
+def test_market_risk_refiner_materializes_market_risk_subsections() -> None:
+    block = DocumentBlock(
+        part="PART II",
+        item="Item 7A. Quantitative and Qualitative Disclosures About Market Risk",
+        label="Item 7A. Quantitative and Qualitative Disclosures About Market Risk",
+        lines=[
+            NormalizedLine(12, "Interest Rate Risk", "", 0),
+            NormalizedLine(12, "We are exposed to fluctuations in interest rates.", "", 1),
+            NormalizedLine(12, "Foreign Exchange Risk", "", 2),
+            NormalizedLine(12, "We are exposed to foreign currency exchange risk.", "", 3),
+        ],
+        page_start=12,
+        page_end=12,
+    )
+
+    refined = _market_risk_refiner(block)
+
+    assert any(entry.subsection == "Interest Rate Risk" for entry in refined)
+    assert any(entry.subsection == "Foreign Exchange Risk" for entry in refined)
+
+
+def test_item8_refiner_extracts_statement_table_blocks() -> None:
+    block = DocumentBlock(
+        part="PART II",
+        item="Item 8. Financial Statements and Supplementary Data",
+        label="Item 8. Financial Statements and Supplementary Data",
+        lines=[
+            NormalizedLine(13, "Consolidated Statements of Operations", "", 0),
+            NormalizedLine(13, "2019 2018 2017", "", 1),
+            NormalizedLine(13, "Net sales 280,522 232,887 177,866", "", 2),
+        ],
+        page_start=13,
+        page_end=13,
+    )
+
+    refined = _item8_refiner(block)
+
+    assert any(entry.block_type == "table_block" and entry.subsection == "Consolidated Statements of Operations" for entry in refined)
+    assert any(entry.block_type == "table_row" and entry.metric == "Net sales" and entry.year == "2019" for entry in refined)
+
+
 def test_extract_risk_sections_from_text_handles_embedded_key_personnel_heading() -> None:
     text = (
         "The Loss of Key Senior Management Personnel or the Failure to Hire and Retain Highly Skilled and Other Key Personnel Could Negatively Affect Our "
@@ -196,6 +303,32 @@ def test_build_pdf_documents_creates_semantic_chunks(mock_exists: Mock, mock_ext
             "The Loss of Key Senior Management Personnel or the Inability to Hire and Retain Qualified Personnel Could Harm Our Business",
             "Our future success depends on our senior management.",
         ]),
+        (11, [
+            "Item 1. Business",
+            "Overview",
+            "We focus on low prices, selection, and convenience.",
+        ]),
+        (12, [
+            "Item 2. Properties",
+            "Properties",
+            "We operate offices and fulfillment centers worldwide.",
+        ]),
+        (13, [
+            "Item 3. Legal Proceedings",
+            "Legal Proceedings",
+            "From time to time, we are involved in legal proceedings in the ordinary course of business.",
+        ]),
+        (14, [
+            "Item 7A. Quantitative and Qualitative Disclosures About Market Risk",
+            "Interest Rate Risk",
+            "We are exposed to fluctuations in interest rates.",
+        ]),
+        (15, [
+            "Item 8. Financial Statements and Supplementary Data",
+            "Consolidated Statements of Operations",
+            "2019 2018 2017",
+            "Net sales 280,522 232,887 177,866",
+        ]),
     ]
     mock_extract_pdf_metadata.return_value = ("Amazon.com, Inc.", "FORM 10-K", "December 31, 2019")
 
@@ -208,6 +341,11 @@ def test_build_pdf_documents_creates_semantic_chunks(mock_exists: Mock, mock_ext
     assert len([document for document in documents_first if document.section == PRIMARY_TABLE_SECTION and document.content_type == "table_block"]) == 1
     assert any(document.section == ITEM_7_SECTION and document.subsection == "Results of Operations" for document in documents_first)
     assert any(document.section == ITEM_1A_SECTION and document.subsection for document in documents_first)
+    assert any(document.section == "Item 1. Business" and document.content_type == "fact" for document in documents_first)
+    assert any(document.section == "Item 2. Properties" and document.content_type == "fact" for document in documents_first)
+    assert any(document.section == "Item 3. Legal Proceedings" and document.content_type == "fact" for document in documents_first)
+    assert any(document.section == "Item 7A. Quantitative and Qualitative Disclosures About Market Risk" and document.subsection == "Interest Rate Risk" for document in documents_first)
+    assert any(document.section == "Item 8. Financial Statements and Supplementary Data" and document.content_type == "table_block" for document in documents_first)
 
 
 def test_validate_documents_rejects_duplicate_metric_year_rows() -> None:

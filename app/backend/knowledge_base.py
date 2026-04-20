@@ -66,6 +66,11 @@ RISK_QUERY_HINTS = {
     "personnel",
     "management",
 }
+BUSINESS_QUERY_HINTS = {"business", "focus", "customers", "consumer", "sellers", "aws"}
+PROPERTIES_QUERY_HINTS = {"properties", "facilities", "headquarters", "offices", "fulfillment", "centers", "data"}
+LEGAL_QUERY_HINTS = {"legal", "proceedings", "litigation", "lawsuit", "claims"}
+MARKET_RISK_QUERY_HINTS = {"market", "risk", "7a", "interest", "foreign", "exchange", "currency"}
+ITEM8_QUERY_HINTS = {"financial", "statements", "supplementary", "balance", "cash", "flows", "stockholders"}
 
 
 def _extract_question_keywords(question: str) -> set[str]:
@@ -100,8 +105,10 @@ def _classify_question_intent(question: str) -> str:
         return "numeric_table"
     if keywords & EXECUTIVE_QUERY_HINTS:
         return "entity_lookup"
-    if keywords & RISK_QUERY_HINTS and len(question.split()) >= 6:
+    if not (keywords & MARKET_RISK_QUERY_HINTS or "item 7a" in question_lower) and keywords & RISK_QUERY_HINTS and len(question.split()) >= 6:
         return "heading_lookup"
+    if keywords & (BUSINESS_QUERY_HINTS | PROPERTIES_QUERY_HINTS | LEGAL_QUERY_HINTS | MARKET_RISK_QUERY_HINTS | ITEM8_QUERY_HINTS):
+        return "narrative_explainer"
     if any(token in question_lower for token in {"results of operations", "liquidity", "capital resources", "why", "explain"}):
         return "narrative_explainer"
     return "general_lookup"
@@ -146,6 +153,27 @@ def _heading_query_text(question: str) -> str | None:
     return normalized or None
 
 
+def _expected_items(question: str) -> set[str]:
+    keywords = _extract_question_keywords(question)
+    question_lower = question.casefold()
+    expected: set[str] = set()
+    if keywords & BUSINESS_QUERY_HINTS and not (keywords & PROPERTIES_QUERY_HINTS):
+        expected.add("Item 1. Business")
+    if keywords & PROPERTIES_QUERY_HINTS:
+        expected.add("Item 2. Properties")
+    if keywords & LEGAL_QUERY_HINTS:
+        expected.add("Item 3. Legal Proceedings")
+    if "item 7a" in question_lower or (keywords & MARKET_RISK_QUERY_HINTS and "item 1a" not in question_lower):
+        expected.add("Item 7A. Quantitative and Qualitative Disclosures About Market Risk")
+    if keywords & ITEM8_QUERY_HINTS:
+        expected.add("Item 8. Financial Statements and Supplementary Data")
+    return expected
+
+
+def _is_large_item2_blob(chunk: RetrievedChunk) -> bool:
+    return chunk.item == "Item 2. Properties" and len(chunk.content) > 350 and chunk.subsection is None
+
+
 def _content_type_priority(chunk: RetrievedChunk, intent: str) -> int:
     if intent == "numeric_table":
         if chunk.content_type == "table_row":
@@ -170,9 +198,9 @@ def _content_type_priority(chunk: RetrievedChunk, intent: str) -> int:
             return 3
         return 1
     if intent == "narrative_explainer":
-        if chunk.content_type == "narrative":
-            return 5
         if chunk.content_type == "fact":
+            return 5
+        if chunk.content_type == "narrative":
             return 4
         if chunk.content_type == "table_block":
             return 2
@@ -197,6 +225,7 @@ def _rerank_chunks(question: str, chunks: list[RetrievedChunk]) -> list[Retrieve
         section_tokens = set(re.findall(r"[a-z0-9]+", chunk.section.casefold()))
         item_tokens = set(re.findall(r"[a-z0-9]+", (chunk.item or "").casefold()))
         subsection_tokens = set(re.findall(r"[a-z0-9]+", (chunk.subsection or "").casefold()))
+        subsubsection_tokens = set(re.findall(r"[a-z0-9]+", (chunk.subsubsection or "").casefold()))
         metric_tokens = set(re.findall(r"[a-z0-9]+", (chunk.metric or "").casefold()))
         table_tokens = set(re.findall(r"[a-z0-9]+", (chunk.table_name or "").casefold()))
         entity_tokens = set(re.findall(r"[a-z0-9]+", (chunk.entity_name or "").casefold()))
@@ -206,6 +235,7 @@ def _rerank_chunks(question: str, chunks: list[RetrievedChunk]) -> list[Retrieve
             + len(keywords & section_tokens) * 4
             + len(keywords & item_tokens) * 4
             + len(keywords & subsection_tokens) * 5
+            + len(keywords & subsubsection_tokens) * 6
             + len(keywords & metric_tokens) * 6
             + len(keywords & table_tokens) * 3
             + len(keywords & entity_tokens) * 8
@@ -215,6 +245,17 @@ def _rerank_chunks(question: str, chunks: list[RetrievedChunk]) -> list[Retrieve
         retrieval_score = chunk.lexical_score + chunk.vector_score
         exact_match_bonus = 0
         penalty = 0.0
+        expected_items = _expected_items(question)
+        if expected_items and chunk.item in expected_items:
+            exact_match_bonus += 18
+        elif expected_items and chunk.item and chunk.item not in expected_items:
+            penalty += 10
+        if intent == "narrative_explainer" and _is_large_item2_blob(chunk) and chunk.item not in expected_items:
+            penalty += 24
+        if intent == "narrative_explainer" and chunk.item == "Item 1. Business" and chunk.subsection in {"General", "Consumers"} and (keywords & BUSINESS_QUERY_HINTS):
+            exact_match_bonus += 14
+        if intent == "narrative_explainer" and chunk.item == "Item 3. Legal Proceedings" and (keywords & LEGAL_QUERY_HINTS):
+            exact_match_bonus += 20
         if intent == "numeric_table" and chunk.metric and chunk.metric.casefold() in question.casefold():
             exact_match_bonus += 6
         if intent == "numeric_table" and chunk.year and chunk.year in question:
@@ -225,6 +266,8 @@ def _rerank_chunks(question: str, chunks: list[RetrievedChunk]) -> list[Retrieve
             penalty += 15
         if chunk.subsection and any(token in chunk.subsection.casefold() for token in keywords):
             exact_match_bonus += 3
+        if chunk.subsubsection and any(token in chunk.subsubsection.casefold() for token in keywords):
+            exact_match_bonus += 5
         if intent == "entity_lookup":
             executive_fields = " ".join(filter(None, [chunk.section, chunk.subsection, chunk.table_name, chunk.entity_name, chunk.content[:220]])).casefold()
             if "executive officers and directors" in executive_fields:
@@ -309,8 +352,22 @@ def _limit_chunks_for_intent(question: str, chunks: list[RetrievedChunk]) -> lis
                 return table_blocks[:2]
         return prioritized[:5] if prioritized else chunks[:5]
     if intent == "narrative_explainer":
-        prioritized = [chunk for chunk in chunks if chunk.content_type in {"narrative", "fact"}]
-        return prioritized[:5] if prioritized else chunks[:5]
+        expected_items = _expected_items(question)
+        prioritized = [chunk for chunk in chunks if chunk.content_type in {"narrative", "fact", "table_block"}]
+        if expected_items:
+            item_specific = [chunk for chunk in prioritized if chunk.item in expected_items]
+            if item_specific:
+                if "Item 7A. Quantitative and Qualitative Disclosures About Market Risk" in expected_items and not any(chunk.item == "Item 7A. Quantitative and Qualitative Disclosures About Market Risk" for chunk in prioritized):
+                    item_specific = [chunk for chunk in item_specific if chunk.item != "Item 1A. Risk Factors"]
+                if "Item 8. Financial Statements and Supplementary Data" in expected_items and not any(chunk.item == "Item 8. Financial Statements and Supplementary Data" for chunk in prioritized):
+                    item_specific = [chunk for chunk in item_specific if chunk.item != "Item 1A. Risk Factors"]
+                item_specific = [chunk for chunk in item_specific if not (_is_large_item2_blob(chunk) and chunk.item not in expected_items)]
+                return item_specific[:5] if item_specific else chunks[:3]
+        fallback = [chunk for chunk in prioritized if not _is_large_item2_blob(chunk)]
+        if expected_items & {"Item 7A. Quantitative and Qualitative Disclosures About Market Risk", "Item 8. Financial Statements and Supplementary Data"}:
+            fallback = [chunk for chunk in fallback if chunk.item != "Item 1A. Risk Factors"]
+            return fallback[:3] if fallback else []
+        return fallback[:5] if fallback else prioritized[:5] if prioritized else chunks[:5]
     return chunks[:6]
 
 
@@ -325,6 +382,8 @@ def _format_context(chunks: list[RetrievedChunk]) -> str:
             lines.append(f"Item: {chunk.item}")
         if chunk.subsection:
             lines.append(f"Subsection: {chunk.subsection}")
+        if chunk.subsubsection:
+            lines.append(f"Subsubsection: {chunk.subsubsection}")
         if page_span:
             lines.append(f"Pages: {page_span}")
         if chunk.content_type:
@@ -418,9 +477,17 @@ def _build_source_title(chunk: RetrievedChunk) -> str:
     if chunk.content_type == "profile_bio" and chunk.entity_name:
         return f"Executive Officers and Directors - {chunk.entity_name} - Biography"
     if chunk.content_type == "table_block" and chunk.table_name:
+        if chunk.subsection:
+            return f"{chunk.title} - {chunk.section} - {chunk.subsection}"
         return f"{chunk.title} - {chunk.table_name}"
     if chunk.content_type == "fact":
+        if chunk.subsubsection:
+            return f"{chunk.title} - {chunk.section} - {chunk.subsection} - {chunk.subsubsection}"
+        if chunk.subsection:
+            return f"{chunk.title} - {chunk.section} - {chunk.subsection}"
         return f"{chunk.title} - {chunk.section} - Fact"
+    if chunk.subsubsection:
+        return f"{chunk.title} - {chunk.section} - {chunk.subsection} - {chunk.subsubsection}"
     if chunk.subsection:
         return f"{chunk.title} - {chunk.section} - {chunk.subsection}"
     inferred_heading = _heading_query_text(os.getenv("KB_ACTIVE_QUESTION", ""))
@@ -434,6 +501,8 @@ def _build_source_title(chunk: RetrievedChunk) -> str:
 def _build_source_snippet(chunk: RetrievedChunk) -> str:
     if chunk.content_type in {"table_row", "profile_row", "profile_bio", "fact"}:
         return chunk.content[:220]
+    if chunk.subsubsection:
+        return f"{chunk.subsubsection}: {chunk.content[:180]}"[:220]
     if chunk.subsection:
         return f"{chunk.subsection}: {chunk.content[:180]}"[:220]
     inferred_heading = _heading_query_text(os.getenv("KB_ACTIVE_QUESTION", ""))
@@ -444,14 +513,14 @@ def _build_source_snippet(chunk: RetrievedChunk) -> str:
 
 def _build_source_semantic_key(chunk: RetrievedChunk) -> str:
     if chunk.content_type == "table_row":
-        return f"{chunk.doc_id}:{chunk.content_type}:{chunk.metric}:{chunk.year}"
+        return f"{chunk.doc_id}:{chunk.content_type}:{chunk.subsection}:{chunk.metric}:{chunk.year}"
     if chunk.content_type in {"profile_row", "profile_bio"}:
         return f"{chunk.doc_id}:{chunk.content_type}:{chunk.entity_name}"
     if chunk.content_type == "table_block":
-        return f"{chunk.doc_id}:{chunk.content_type}:{chunk.table_name}"
+        return f"{chunk.doc_id}:{chunk.content_type}:{chunk.section}:{chunk.subsection}:{chunk.table_name}"
     if chunk.content_type == "fact":
-        return f"{chunk.doc_id}:{chunk.content_type}:{chunk.section}:{chunk.subsection}:{chunk.content[:80]}"
-    return f"{chunk.doc_id}:{chunk.content_type}:{chunk.section}:{chunk.subsection}"
+        return f"{chunk.doc_id}:{chunk.content_type}:{chunk.section}:{chunk.subsection}:{chunk.subsubsection}:{chunk.content[:80]}"
+    return f"{chunk.doc_id}:{chunk.content_type}:{chunk.section}:{chunk.subsection}:{chunk.subsubsection}"
 
 
 def _build_sources(chunks: list[RetrievedChunk]) -> list[SourceItem]:

@@ -52,6 +52,7 @@ def test_classify_query_intent_handles_numeric_entity_and_heading_queries() -> N
     assert _classify_query_intent("What were net sales in 2019?") == "numeric_table"
     assert _classify_query_intent("Who are the executive officers and directors?") == "entity_lookup"
     assert _classify_query_intent("The Loss of Key Senior Management Personnel Could Harm Our Business") == "heading_lookup"
+    assert _classify_query_intent("What facilities did Amazon operate?") == "narrative_explainer"
 
 
 def test_build_lexical_query_boosts_entity_fields_for_entity_lookup() -> None:
@@ -66,6 +67,20 @@ def test_build_lexical_query_boosts_subsection_for_heading_lookup() -> None:
     phrase_fields = query["query"]["bool"]["should"][1]["multi_match"]["fields"]
 
     assert "subsection^16" in phrase_fields or "subsection^12" in phrase_fields
+
+
+def test_build_lexical_query_includes_subsubsection_for_narrative_queries() -> None:
+    query = _build_lexical_query("What market risks does Amazon discuss?", top_k=4)
+    best_fields = query["query"]["bool"]["should"][0]["multi_match"]["fields"]
+
+    assert any(field.startswith("subsubsection^") for field in best_fields)
+
+
+def test_build_lexical_query_adds_item1_boost_for_business_query() -> None:
+    query = _build_lexical_query("What does Amazon's business focus on?", top_k=4)
+    should_clauses = query["query"]["bool"]["should"]
+
+    assert any(clause.get("term", {}).get("item.keyword", {}).get("value") == "Item 1. Business" for clause in should_clauses)
 
 
 def test_merge_candidates_keeps_exact_lexical_match_above_semantic_neighbor() -> None:
@@ -212,3 +227,77 @@ def test_rerank_chunks_penalizes_generic_harm_heading_without_specific_overlap()
     )
 
     assert ranked[0].chunk_id == "risk-specific"
+
+
+def test_rerank_chunks_prioritizes_item2_for_facilities_query() -> None:
+    item2 = RetrievedChunk(
+        chunk_id="item2-facilities",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 2. Properties",
+        content="We operate offices, fulfillment centers, and data centers worldwide.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=2.0,
+        lexical_score=2.0,
+        vector_score=0.0,
+        item="Item 2. Properties",
+        subsection="Properties",
+        content_type="fact",
+    )
+    item1 = RetrievedChunk(
+        chunk_id="item1-noise",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 1. Business",
+        content="We serve consumers through our online and physical stores.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=2.4,
+        lexical_score=2.4,
+        vector_score=0.0,
+        item="Item 1. Business",
+        subsection="Overview",
+        content_type="narrative",
+    )
+
+    ranked = _rerank_chunks("What facilities did Amazon operate?", [item1, item2])
+
+    assert ranked[0].chunk_id == "item2-facilities"
+
+
+def test_rerank_chunks_prioritizes_item7a_for_market_risk_query() -> None:
+    item7a = RetrievedChunk(
+        chunk_id="item7a-risk",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 7A. Quantitative and Qualitative Disclosures About Market Risk",
+        content="We are exposed to fluctuations in foreign currency exchange rates and interest rates.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=2.0,
+        lexical_score=2.0,
+        vector_score=0.0,
+        item="Item 7A. Quantitative and Qualitative Disclosures About Market Risk",
+        subsection="Foreign Exchange Risk",
+        content_type="narrative",
+    )
+    item1a = RetrievedChunk(
+        chunk_id="item1a-risk",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 1A. Risk Factors",
+        content="We face many risks in our business.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=2.5,
+        lexical_score=2.5,
+        vector_score=0.0,
+        item="Item 1A. Risk Factors",
+        subsection="General Risks",
+        content_type="narrative",
+    )
+
+    ranked = _rerank_chunks("What market risks does Amazon discuss?", [item1a, item7a])
+
+    assert ranked[0].chunk_id == "item7a-risk"

@@ -29,6 +29,62 @@ def _sample_chunk() -> RetrievedChunk:
     )
 
 
+def _item2_chunk(score: float = 5.0) -> RetrievedChunk:
+    return RetrievedChunk(
+        chunk_id="item2-facilities",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 2. Properties",
+        content="We operate offices, fulfillment centers, sortation centers, and data centers worldwide.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=score,
+        lexical_score=score,
+        vector_score=0.0,
+        item="Item 2. Properties",
+        subsection="Properties",
+        content_type="fact",
+    )
+
+
+def _item7a_chunk(score: float = 5.0) -> RetrievedChunk:
+    return RetrievedChunk(
+        chunk_id="item7a-risk",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 7A. Quantitative and Qualitative Disclosures About Market Risk",
+        content="We are exposed to fluctuations in interest rates and foreign currency exchange rates.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=score,
+        lexical_score=score,
+        vector_score=0.0,
+        item="Item 7A. Quantitative and Qualitative Disclosures About Market Risk",
+        subsection="Interest Rate Risk",
+        subsubsection="Foreign Exchange Risk",
+        content_type="narrative",
+    )
+
+
+def _item8_chunk(score: float = 5.0) -> RetrievedChunk:
+    return RetrievedChunk(
+        chunk_id="item8-statements",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 8. Financial Statements and Supplementary Data",
+        content="Consolidated Statements of Operations\n2019 2018 2017\nNet sales 280,522 232,887 177,866",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=score,
+        lexical_score=score,
+        vector_score=0.0,
+        item="Item 8. Financial Statements and Supplementary Data",
+        subsection="Consolidated Statements of Operations",
+        content_type="table_block",
+        table_name="Consolidated Statements of Operations",
+    )
+
+
 def _table_row_chunk(score: float = 5.0) -> RetrievedChunk:
     return RetrievedChunk(
         chunk_id="amazon-row-1",
@@ -173,6 +229,114 @@ def test_retrieve_relevant_chunks_prefers_item7_narrative_for_explainer_question
     assert chunks[0].chunk_id == "item7-1"
 
 
+@patch("app.backend.knowledge_base.search_chunks")
+def test_retrieve_relevant_chunks_prefers_item2_for_properties_query(mock_search_chunks: Mock) -> None:
+    mock_search_chunks.return_value = [_sample_chunk(), _item2_chunk()]
+
+    chunks = retrieve_relevant_chunks("What facilities did Amazon operate?")
+
+    assert chunks[0].chunk_id == "item2-facilities"
+
+
+@patch("app.backend.knowledge_base.search_chunks")
+def test_retrieve_relevant_chunks_prefers_item1_for_business_focus_query(mock_search_chunks: Mock) -> None:
+    item2_blob = RetrievedChunk(
+        chunk_id="item2-blob",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 2. Properties",
+        content="We operated offices, stores, fulfillment centers, data centers, and other facilities worldwide. " * 8,
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=5.5,
+        lexical_score=5.5,
+        vector_score=0.0,
+        item="Item 2. Properties",
+        content_type="narrative",
+    )
+    item1 = RetrievedChunk(
+        chunk_id="item1-general",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 1. Business",
+        content="We seek to be Earth's most customer-centric company and serve consumers, sellers, developers, enterprises, and content creators.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=4.6,
+        lexical_score=4.6,
+        vector_score=0.0,
+        item="Item 1. Business",
+        subsection="General",
+        content_type="narrative",
+    )
+    mock_search_chunks.return_value = [item2_blob, item1]
+
+    chunks = retrieve_relevant_chunks("What does Amazon's business focus on?")
+
+    assert chunks[0].chunk_id == "item1-general"
+
+
+@patch("app.backend.knowledge_base.search_chunks")
+def test_retrieve_relevant_chunks_prefers_item3_for_legal_query(mock_search_chunks: Mock) -> None:
+    item3 = RetrievedChunk(
+        chunk_id="item3-legal",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 3. Legal Proceedings",
+        content="See Item 8 of Part II, Note 7, Commitments and Contingencies - Legal Proceedings.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=4.2,
+        lexical_score=4.2,
+        vector_score=0.0,
+        item="Item 3. Legal Proceedings",
+        content_type="narrative",
+    )
+    item2_blob = RetrievedChunk(
+        chunk_id="item2-blob",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 2. Properties",
+        content="We operated offices, stores, fulfillment centers, data centers, and other facilities worldwide. " * 8,
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=4.9,
+        lexical_score=4.9,
+        vector_score=0.0,
+        item="Item 2. Properties",
+        content_type="narrative",
+    )
+    mock_search_chunks.return_value = [item2_blob, item3]
+
+    chunks = retrieve_relevant_chunks("Were there any legal proceedings?")
+
+    assert chunks[0].chunk_id == "item3-legal"
+
+
+@patch("app.backend.knowledge_base.search_chunks")
+def test_retrieve_relevant_chunks_prefers_item7a_for_market_risk_query(mock_search_chunks: Mock) -> None:
+    noisy = RetrievedChunk(
+        chunk_id="noise-risk",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 1A. Risk Factors",
+        content="We face a number of significant risks.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=5.2,
+        lexical_score=5.2,
+        vector_score=0.0,
+        item="Item 1A. Risk Factors",
+        subsection="General Risks",
+        content_type="narrative",
+    )
+    mock_search_chunks.return_value = [noisy, _item7a_chunk()]
+
+    chunks = retrieve_relevant_chunks("What does Item 7A say about market risk?")
+
+    assert chunks[0].chunk_id == "item7a-risk"
+
+
 def test_build_sources_deduplicates_by_semantic_key_for_profile_rows() -> None:
     first = _profile_row_chunk()
     duplicate = RetrievedChunk(**{**first.__dict__, "chunk_id": "exec-row-2", "score": 4.5})
@@ -195,6 +359,23 @@ def test_build_sources_formats_table_row_title() -> None:
     sources = _build_sources([_table_row_chunk()])
 
     assert sources[0].title == "Item 6. Selected Consolidated Financial Data - Net sales (2019)"
+
+
+def test_build_sources_uses_subsubsection_for_narrative_titles() -> None:
+    sources = _build_sources([_item7a_chunk()])
+
+    assert sources[0].title == (
+        "Amazon.com, Inc. Form 10-K - Item 7A. Quantitative and Qualitative Disclosures About Market Risk "
+        "- Interest Rate Risk - Foreign Exchange Risk"
+    )
+
+
+def test_build_sources_formats_item8_table_block_with_specific_statement_title() -> None:
+    sources = _build_sources([_item8_chunk()])
+
+    assert sources[0].title == (
+        "Amazon.com, Inc. Form 10-K - Item 8. Financial Statements and Supplementary Data - Consolidated Statements of Operations"
+    )
 
 
 @patch("app.backend.knowledge_base.generate_grounded_answer_stream")

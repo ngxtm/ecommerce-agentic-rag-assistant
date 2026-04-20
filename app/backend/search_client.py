@@ -40,6 +40,11 @@ NUMERIC_QUERY_HINTS = (
     "2019",
     "2018",
 )
+ITEM_1_HINTS = ("business", "focus on", "customers", "amazon web services", "consumers", "sellers")
+ITEM_2_HINTS = ("properties", "facilities", "operate", "headquarters", "offices", "fulfillment centers", "data centers")
+ITEM_3_HINTS = ("legal proceedings", "litigation", "lawsuit", "claims")
+ITEM_7A_HINTS = ("market risk", "item 7a", "interest rate risk", "foreign exchange risk", "foreign currency risk", "equity investment risk")
+ITEM_8_HINTS = ("item 8", "financial statements", "supplementary data", "balance sheets", "cash flows", "stockholders", "statements of operations")
 
 
 @dataclass
@@ -57,6 +62,7 @@ class RetrievedChunk:
     part: str | None = None
     item: str | None = None
     subsection: str | None = None
+    subsubsection: str | None = None
     page_start: int | None = None
     page_end: int | None = None
     filing_type: str | None = None
@@ -144,18 +150,31 @@ def _classify_query_intent(question: str) -> str:
         return "entity_lookup"
     if any(hint in normalized for hint in RISK_HEADING_HINTS) or (len(question.split()) >= 8 and question[:1].isupper()):
         return "heading_lookup"
+    if any(hint in normalized for hint in ITEM_1_HINTS + ITEM_2_HINTS + ITEM_3_HINTS + ITEM_7A_HINTS + ITEM_8_HINTS):
+        return "narrative_explainer"
     if "management" in normalized or "results of operations" in normalized or "liquidity" in normalized:
         return "narrative_explainer"
     return "general_lookup"
 
 
 def _expand_query(question: str, intent: str) -> str:
+    normalized = question.casefold()
     if intent == "entity_lookup":
         return f"{question} Information About Our Executive Officers Executive Officers and Directors Board of Directors leadership"
     if intent == "heading_lookup":
         return f"{question} Item 1A Risk Factors subsection heading"
     if intent == "numeric_table":
         return f"{question} Selected Consolidated Financial Data table"
+    if any(hint in normalized for hint in ITEM_1_HINTS):
+        return f"{question} Item 1 Business General Consumers Sellers developers enterprises customer-centric focus selection price convenience"
+    if any(hint in normalized for hint in ITEM_2_HINTS):
+        return f"{question} Item 2 Properties facilities headquarters offices fulfillment centers"
+    if any(hint in normalized for hint in ITEM_3_HINTS):
+        return f"{question} Item 3 Legal Proceedings legal proceedings claims litigation contingencies"
+    if any(hint in normalized for hint in ITEM_7A_HINTS):
+        return f"{question} Item 7A Quantitative and Qualitative Disclosures About Market Risk"
+    if any(hint in normalized for hint in ITEM_8_HINTS):
+        return f"{question} Item 8 Financial Statements and Supplementary Data"
     return question
 
 
@@ -165,6 +184,7 @@ def _fields_for_intent(intent: str, phrase: bool = False) -> list[str]:
         "section^8",
         "item^4",
         "subsection^8",
+        "subsubsection^9",
         "table_name^8",
         "metric^6",
         "year^5",
@@ -179,6 +199,7 @@ def _fields_for_intent(intent: str, phrase: bool = False) -> list[str]:
             "section^12",
             "item^8",
             "subsection^12",
+            "subsubsection^14",
             "table_name^12",
             "metric^10",
             "year^8",
@@ -192,36 +213,49 @@ def _fields_for_intent(intent: str, phrase: bool = False) -> list[str]:
     if intent == "entity_lookup":
         return [field.replace("entity_name^6", "entity_name^14").replace("entity_role^4", "entity_role^10").replace("subsection^8", "subsection^10") for field in base_fields]
     if intent == "heading_lookup":
-        return [field.replace("subsection^8", "subsection^16").replace("section^8", "section^10") for field in base_fields]
+        return [field.replace("subsection^8", "subsection^16").replace("subsubsection^9", "subsubsection^18").replace("section^8", "section^10") for field in base_fields]
+    if intent == "narrative_explainer":
+        return [field.replace("item^4", "item^10").replace("subsection^8", "subsection^12").replace("subsubsection^9", "subsubsection^14") for field in base_fields]
     return base_fields
 
 
 def _build_lexical_query(question: str, top_k: int) -> dict[str, object]:
     intent = _classify_query_intent(question)
     expanded_question = _expand_query(question, intent)
+    normalized = question.casefold()
+    should = [
+        {
+            "multi_match": {
+                "query": expanded_question,
+                "fields": _fields_for_intent(intent),
+                "type": "best_fields",
+                "operator": "or",
+            }
+        },
+        {
+            "multi_match": {
+                "query": expanded_question,
+                "fields": _fields_for_intent(intent, phrase=True),
+                "type": "phrase",
+                "slop": 1,
+            }
+        },
+    ]
+    if intent == "narrative_explainer":
+        if any(hint in normalized for hint in ITEM_1_HINTS) and not any(hint in normalized for hint in ITEM_2_HINTS):
+            should.append({"term": {"item.keyword": {"value": "Item 1. Business", "boost": 25}}})
+            should.append({"term": {"subsection.keyword": {"value": "General", "boost": 12}}})
+            should.append({"term": {"subsection.keyword": {"value": "Consumers", "boost": 16}}})
+        if any(hint in normalized for hint in ITEM_3_HINTS):
+            should.append({"term": {"item.keyword": {"value": "Item 3. Legal Proceedings", "boost": 28}}})
+        if any(hint in normalized for hint in ITEM_2_HINTS):
+            should.append({"term": {"item.keyword": {"value": "Item 2. Properties", "boost": 24}}})
     return {
         "size": max(top_k * LEXICAL_CANDIDATE_MULTIPLIER, top_k),
         "query": {
             "bool": {
                 "filter": _build_doc_filter(),
-                "should": [
-                    {
-                        "multi_match": {
-                            "query": expanded_question,
-                            "fields": _fields_for_intent(intent),
-                            "type": "best_fields",
-                            "operator": "or",
-                        }
-                    },
-                    {
-                        "multi_match": {
-                            "query": expanded_question,
-                            "fields": _fields_for_intent(intent, phrase=True),
-                            "type": "phrase",
-                            "slop": 1,
-                        }
-                    },
-                ],
+                "should": should,
                 "minimum_should_match": 1,
             }
         },
@@ -262,6 +296,7 @@ def _normalize_hit(hit: dict[str, object], lexical_score: float = 0.0, vector_sc
         part=source.get("part"),
         item=source.get("item"),
         subsection=source.get("subsection"),
+        subsubsection=source.get("subsubsection"),
         page_start=source.get("page_start"),
         page_end=source.get("page_end"),
         filing_type=source.get("filing_type"),

@@ -45,6 +45,7 @@ EXECUTIVE_OFFICER_NAMES = (
 YEAR_RE = re.compile(r"\b(2015|2016|2017|2018|2019)\b")
 PART_RE = re.compile(r"^PART\s+([IVX]+)\b", re.IGNORECASE)
 ITEM_HEADING_START_RE = re.compile(r"^(Item\s+\d+[A-Z]?\.)(.*)$", re.IGNORECASE)
+ITEM_HEADING_EMBEDDED_RE = re.compile(r"(?=(?:PART\s+[IVX]+\s*)?Item\s+\d+[A-Z]?\.)", re.IGNORECASE)
 ITEM_HEADING_TAIL_RE = re.compile(
     r"^(?P<title>[A-Za-z][A-Za-z ,’'\-()&/]+?)(?:\s{2,}|\s+The following|\s+This |\s+Our |\s+We |\s+Year Ended|\s+December 31,|$)(?P<remainder>.*)$",
     re.IGNORECASE,
@@ -101,6 +102,37 @@ MDA_HEADING_HINTS = (
     "Critical Accounting Policies",
     "Overview",
 )
+RUN_ON_HEADING_REPLACEMENTS = (
+    (re.compile(r"\bPART\s+IItem\b", re.IGNORECASE), "PART I Item"),
+    (re.compile(r"\bPART\s+IIItem\b", re.IGNORECASE), "PART II Item"),
+    (re.compile(r"\bItem\s+(\d+[A-Z]?)\.([A-Z])"), r"Item \1. \2"),
+    (re.compile(r"\bGeneralWe\b"), "General We"),
+    (re.compile(r"\bConsumersWe\b"), "Consumers We"),
+    (re.compile(r"\bSellersWe\b"), "Sellers We"),
+    (re.compile(r"\bDevelopers and EnterprisesWe\b"), "Developers and Enterprises We"),
+    (re.compile(r"\bContent CreatorsWe\b"), "Content Creators We"),
+    (re.compile(r"\bCompetitionOur\b"), "Competition Our"),
+    (re.compile(r"\bIntellectual PropertyWe\b"), "Intellectual Property We"),
+    (re.compile(r"\bSeasonalityOur\b"), "Seasonality Our"),
+    (re.compile(r"\bEmployeesWe\b"), "Employees We"),
+    (re.compile(r"\bAvailable InformationOur\b"), "Available Information Our"),
+    (re.compile(r"\bExecutive Officers and DirectorsThe\b"), "Executive Officers and Directors The"),
+    (re.compile(r"\bBoard of DirectorsName\b"), "Board of Directors Name"),
+)
+EMBEDDED_HEADING_SPLITS = (
+    "General",
+    "Consumers",
+    "Sellers",
+    "Developers and Enterprises",
+    "Content Creators",
+    "Competition",
+    "Intellectual Property",
+    "Seasonality",
+    "Employees",
+    "Available Information",
+    "Executive Officers and Directors",
+    "Board of Directors",
+)
 
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -130,6 +162,7 @@ INDEX_MAPPINGS = {
         "part": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
         "item": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
         "subsection": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+        "subsubsection": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
         "page_start": {"type": "integer"},
         "page_end": {"type": "integer"},
         "filing_type": {"type": "keyword"},
@@ -163,6 +196,7 @@ class ChunkDocument:
     part: str | None = None
     item: str | None = None
     subsection: str | None = None
+    subsubsection: str | None = None
     page_start: int | None = None
     page_end: int | None = None
     filing_type: str | None = None
@@ -204,6 +238,7 @@ class RefinedBlock:
     item: str | None
     section: str
     subsection: str | None
+    subsubsection: str | None
     block_type: str
     lines: list[str]
     page_start: int | None = None
@@ -241,6 +276,70 @@ def _mapping_supports_doc_id_keyword(client: object, index_name: str) -> bool:
 
 def _normalize_text_line(line: str) -> str:
     return re.sub(r"\s+", " ", line).strip()
+
+
+def _repair_run_on_text(text: str) -> str:
+    repaired = text
+    for pattern, replacement in RUN_ON_HEADING_REPLACEMENTS:
+        repaired = pattern.sub(replacement, repaired)
+    return repaired
+
+
+def _split_embedded_item_lines(text: str) -> list[str]:
+    repaired = _repair_run_on_text(_normalize_text_line(text))
+    if not repaired:
+        return []
+    parts: list[str] = []
+    item_matches = list(ITEM_HEADING_EMBEDDED_RE.finditer(repaired))
+    if item_matches:
+        starts = [match.start() for match in item_matches if match.start() > 0]
+        previous = 0
+        for start in starts:
+            part = repaired[previous:start].strip()
+            if part:
+                parts.append(part)
+            previous = start
+        tail = repaired[previous:].strip()
+        if tail:
+            parts.append(tail)
+    else:
+        parts.append(repaired)
+    return parts
+
+
+def _split_known_run_on_headings(text: str) -> list[str]:
+    segments = [text]
+    for heading in EMBEDDED_HEADING_SPLITS:
+        next_segments: list[str] = []
+        for segment in segments:
+            split_pattern = re.compile(rf"(?<!^)\b{re.escape(heading)}\b")
+            parts = [piece.strip() for piece in split_pattern.split(segment) if piece.strip()]
+            if len(parts) <= 1:
+                next_segments.append(segment)
+                continue
+            first, *rest = parts
+            next_segments.append(first)
+            next_segments.extend(f"{heading} {piece}" if not piece.startswith(heading) else piece for piece in rest)
+        segments = next_segments
+    return segments
+
+
+def _split_inline_heading_and_body(line: str, hints: set[str] | None = None) -> tuple[str | None, str]:
+    normalized = _normalize_text_line(line)
+    if not normalized:
+        return None, ""
+    if _looks_like_table_line(normalized):
+        return None, normalized
+    heading_pool = sorted(hints or set(), key=len, reverse=True)
+    lowered = normalized.casefold()
+    for heading in heading_pool:
+        if not lowered.startswith(f"{heading} "):
+            continue
+        heading_text = normalized[: len(heading)]
+        remainder = _normalize_text_line(normalized[len(heading):])
+        if remainder:
+            return heading_text, remainder
+    return None, normalized
 
 
 def _stable_content_hash(*parts: str) -> str:
@@ -337,10 +436,12 @@ def _normalize_pdf_lines(pages: list[tuple[int, list[str]]]) -> list[NormalizedL
     normalized_lines: list[NormalizedLine] = []
     for page_number, lines in pages:
         for source_index, raw_line in enumerate(lines):
-            text = _normalize_text_line(raw_line)
-            if not text:
-                continue
-            normalized_lines.append(NormalizedLine(page_number=page_number, text=text, raw_text=raw_line, source_index=source_index))
+            for split_line in _split_embedded_item_lines(raw_line):
+                for text in _split_known_run_on_headings(split_line):
+                    normalized = _normalize_text_line(text)
+                    if not normalized:
+                        continue
+                    normalized_lines.append(NormalizedLine(page_number=page_number, text=normalized, raw_text=raw_line, source_index=source_index))
     return normalized_lines
 
 
@@ -412,6 +513,7 @@ def _make_block(block: DocumentBlock, section: str, subsection: str | None, bloc
         item=block.item,
         section=section,
         subsection=subsection,
+        subsubsection=extra.get("subsubsection"),
         block_type=block_type,
         lines=lines,
         page_start=block.page_start,
@@ -427,11 +529,277 @@ def _make_block(block: DocumentBlock, section: str, subsection: str | None, bloc
     )
 
 
+GENERIC_HEADING_DENYLIST = {
+    "see accompanying notes",
+    "table of contents",
+    "index",
+    "form 10-k",
+}
+BUSINESS_HEADING_HINTS = {
+    "general",
+    "overview",
+    "our business",
+    "consumers",
+    "sellers",
+    "developers and enterprises",
+    "content creators",
+    "amazon web services",
+    "competition",
+    "human capital",
+    "employees",
+    "seasonality",
+    "available information",
+}
+PROPERTIES_HEADING_HINTS = {
+    "properties",
+    "facilities",
+    "headquarters",
+    "offices",
+    "fulfillment centers",
+    "data centers",
+}
+LEGAL_HEADING_HINTS = {
+    "legal proceedings",
+    "litigation",
+    "proceedings",
+}
+MARKET_RISK_HEADING_HINTS = {
+    "market risk",
+    "interest rate risk",
+    "foreign exchange risk",
+    "foreign currency risk",
+    "equity investment risk",
+}
+ITEM8_HEADING_HINTS = {
+    "financial statements and supplementary data",
+    "report of independent registered public accounting firm",
+    "consolidated statements of operations",
+    "consolidated statements of comprehensive income",
+    "consolidated balance sheets",
+    "consolidated statements of cash flows",
+    "consolidated statements of stockholders' equity",
+    "notes to consolidated financial statements",
+}
+FACT_PATTERNS = (
+    re.compile(r"\b(we serve|we operate|we own|we lease|we maintain|our business focuses on|we focus on)\b", re.IGNORECASE),
+    re.compile(r"\b(material legal proceedings|ordinary course of business|not currently a party|from time to time)\b", re.IGNORECASE),
+    re.compile(r"\b(market risk|interest rate risk|foreign exchange risk|foreign currency risk|equity investment risk)\b", re.IGNORECASE),
+)
+TABLE_STATEMENT_HEADING_RE = re.compile(
+    r"^(Consolidated|Notes to Consolidated|Report of Independent Registered Public Accounting Firm|Financial Statements and Supplementary Data)",
+    re.IGNORECASE,
+)
+GENERIC_YEAR_ROW_RE = re.compile(
+    r"^(?P<metric>[A-Za-z][A-Za-z0-9 ,.'’\-()&/]+?)\s+(?P<v1>\(?\$?[\d,]+(?:\.\d+)?\)?)\s+(?P<v2>\(?\$?[\d,]+(?:\.\d+)?\)?)\s+(?P<v3>\(?\$?[\d,]+(?:\.\d+)?\)?)",
+    re.IGNORECASE,
+)
+GENERIC_YEAR_HEADER_RE = re.compile(r"^(20\d{2})(?:\s+20\d{2}){2,}$")
+
+
+def _looks_like_table_line(line: str) -> bool:
+    normalized = _normalize_text_line(line)
+    if not normalized:
+        return False
+    if YEAR_HEADER_RE.search(normalized) or Y2019_TO_2015_RE.search(normalized):
+        return True
+    if GENERIC_YEAR_HEADER_RE.match(normalized):
+        return True
+    if TABLE_HEADER_RE.search(normalized):
+        return True
+    return GENERIC_YEAR_ROW_RE.match(normalized) is not None
+
+
+def _is_generic_heading(line: str, hints: set[str] | None = None) -> bool:
+    normalized = _normalize_text_line(line)
+    if not normalized:
+        return False
+    lowered = normalized.casefold()
+    if lowered in GENERIC_HEADING_DENYLIST:
+        return False
+    if normalized.endswith(":"):
+        return True
+    if _looks_like_table_line(normalized):
+        return False
+    if YEAR_RE.search(normalized) and len(normalized.split()) > 4:
+        return False
+    if normalized.endswith("."):
+        return False
+    if len(normalized.split()) < 1 or len(normalized.split()) > 12:
+        return False
+    if hints and lowered in hints:
+        return True
+    words = normalized.split()
+    capitalized = sum(1 for word in words if word[:1].isupper())
+    if capitalized >= max(1, len(words) - 1):
+        return True
+    return False
+
+
+def _split_lines_by_headings(
+    block: DocumentBlock,
+    section: str,
+    hints: set[str] | None = None,
+    allow_subsubsections: bool = False,
+    prefer_peer_headings: bool = True,
+) -> list[RefinedBlock]:
+    refined: list[RefinedBlock] = []
+    current_subsection: str | None = None
+    current_subsubsection: str | None = None
+    current_lines: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_lines
+        if not current_lines:
+            return
+        refined.append(
+            _make_block(
+                block,
+                section,
+                current_subsection,
+                "narrative",
+                current_lines.copy(),
+                subsubsection=current_subsubsection,
+            )
+        )
+        current_lines = []
+
+    for entry in block.lines:
+        line = _normalize_text_line(entry.text)
+        if not line:
+            continue
+        inline_heading, inline_body = _split_inline_heading_and_body(line, hints)
+        if inline_heading:
+            flush()
+            current_subsection = inline_heading.rstrip(":")
+            current_subsubsection = None
+            current_lines.append(inline_body)
+            continue
+        if _is_generic_heading(line, hints):
+            flush()
+            if current_subsection is None:
+                current_subsection = line.rstrip(":")
+                current_subsubsection = None
+            elif allow_subsubsections and not prefer_peer_headings and current_subsection != line.rstrip(":"):
+                current_subsubsection = line.rstrip(":")
+            else:
+                current_subsection = line.rstrip(":")
+                current_subsubsection = None
+            continue
+        current_lines.append(line)
+    flush()
+    return refined
+
+
+def _extract_fact_blocks(
+    block: DocumentBlock,
+    section: str,
+    subsection: str | None,
+    subsubsection: str | None,
+    lines: list[str],
+) -> list[RefinedBlock]:
+    refined: list[RefinedBlock] = []
+    for line in lines:
+        normalized = _normalize_text_line(line)
+        if not normalized or len(normalized) < 30:
+            continue
+        if len(normalized) > 500:
+            continue
+        if _looks_like_table_line(normalized):
+            continue
+        if normalized.count(":") > 2 or normalized.count("$") > 2:
+            continue
+        if any(pattern.search(normalized) for pattern in FACT_PATTERNS):
+            refined.append(
+                _make_block(
+                    block,
+                    section,
+                    subsection,
+                    "fact",
+                    [normalized],
+                    subsubsection=subsubsection,
+                )
+            )
+    return refined
+
+
+def _extract_generic_table_blocks(block: DocumentBlock, section: str) -> list[RefinedBlock]:
+    lines = [_normalize_text_line(line.text) for line in block.lines if _normalize_text_line(line.text)]
+    if not lines:
+        return []
+    refined: list[RefinedBlock] = []
+    current_heading: str | None = None
+    current_lines: list[str] = []
+
+    def flush_table() -> None:
+        nonlocal current_lines
+        has_numeric_table_line = any(_looks_like_table_line(line) for line in current_lines)
+        if len(current_lines) < 2 or not has_numeric_table_line:
+            current_lines = []
+            return
+        table_text = "\n".join(current_lines)
+        refined.append(_make_block(block, section, current_heading, "table_block", [table_text], table_name=current_heading or section))
+        year_match = YEAR_HEADER_RE.search(table_text) or Y2019_TO_2015_RE.search(table_text)
+        years = list(year_match.groups()) if year_match else []
+        if not years:
+            for candidate_line in current_lines:
+                generic_year_match = GENERIC_YEAR_HEADER_RE.match(candidate_line)
+                if generic_year_match:
+                    years = candidate_line.split()
+                    break
+        if years:
+            for row in current_lines:
+                row_match = GENERIC_YEAR_ROW_RE.match(row)
+                if not row_match:
+                    continue
+                metric = _normalize_text_line(row_match.group("metric"))
+                values = [row_match.group("v1"), row_match.group("v2"), row_match.group("v3")]
+                for year, value_raw in zip(years[: len(values)], values, strict=False):
+                    refined.append(
+                        _make_block(
+                            block,
+                            section,
+                            current_heading,
+                            "table_row",
+                            [f"{metric} for {year}: {value_raw}"],
+                            table_name=current_heading or section,
+                            metric=metric,
+                            year=year,
+                            value_raw=value_raw,
+                            value_normalized=_normalize_numeric_value(value_raw),
+                            unit=_infer_unit(metric, None),
+                        )
+                    )
+        current_lines = []
+
+    for line in lines:
+        if TABLE_STATEMENT_HEADING_RE.match(line):
+            flush_table()
+            current_heading = line
+            current_lines = [line]
+            continue
+        if current_heading and (_looks_like_table_line(line) or len(line.split()) > 6):
+            current_lines.append(line)
+            continue
+        if current_heading and current_lines:
+            flush_table()
+            current_heading = None
+    flush_table()
+    return refined
+
+
 def _default_item_refiner(block: DocumentBlock) -> list[RefinedBlock]:
     text = [_normalize_text_line(line.text) for line in block.lines if _normalize_text_line(line.text)]
     if not text:
         return []
-    return [_make_block(block, block.item or block.label, None, "narrative", text)]
+    section = block.item or block.label
+    split_blocks = _split_lines_by_headings(block, section, allow_subsubsections=True)
+    if split_blocks:
+        refined: list[RefinedBlock] = []
+        for entry in split_blocks:
+            refined.append(entry)
+            refined.extend(_extract_fact_blocks(block, section, entry.subsection, entry.subsubsection, entry.lines))
+        return refined
+    return [_make_block(block, section, None, "narrative", text)]
 
 
 def _overview_refiner(block: DocumentBlock) -> list[RefinedBlock]:
@@ -648,6 +1016,69 @@ def _financial_table_refiner(block: DocumentBlock) -> list[RefinedBlock]:
     return refined
 
 
+def _business_refiner(block: DocumentBlock) -> list[RefinedBlock]:
+    if block.item != "Item 1. Business":
+        return []
+    split_blocks = _split_lines_by_headings(block, block.item, hints=BUSINESS_HEADING_HINTS, allow_subsubsections=True)
+    if not split_blocks:
+        split_blocks = [_make_block(block, block.item, None, "narrative", [_normalize_text_line(line.text) for line in block.lines if _normalize_text_line(line.text)])]
+    refined: list[RefinedBlock] = []
+    for entry in split_blocks:
+        refined.append(entry)
+        refined.extend(_extract_fact_blocks(block, block.item, entry.subsection, entry.subsubsection, entry.lines))
+    return refined
+
+
+def _properties_refiner(block: DocumentBlock) -> list[RefinedBlock]:
+    if block.item != "Item 2. Properties":
+        return []
+    split_blocks = _split_lines_by_headings(block, block.item, hints=PROPERTIES_HEADING_HINTS)
+    if not split_blocks:
+        split_blocks = [_make_block(block, block.item, None, "narrative", [_normalize_text_line(line.text) for line in block.lines if _normalize_text_line(line.text)])]
+    refined: list[RefinedBlock] = []
+    for entry in split_blocks:
+        refined.append(entry)
+        refined.extend(_extract_fact_blocks(block, block.item, entry.subsection, entry.subsubsection, entry.lines))
+    return refined
+
+
+def _legal_proceedings_refiner(block: DocumentBlock) -> list[RefinedBlock]:
+    if block.item != "Item 3. Legal Proceedings":
+        return []
+    split_blocks = _split_lines_by_headings(block, block.item, hints=LEGAL_HEADING_HINTS)
+    if not split_blocks:
+        split_blocks = [_make_block(block, block.item, None, "narrative", [_normalize_text_line(line.text) for line in block.lines if _normalize_text_line(line.text)])]
+    refined: list[RefinedBlock] = []
+    for entry in split_blocks:
+        refined.append(entry)
+        refined.extend(_extract_fact_blocks(block, block.item, entry.subsection, entry.subsubsection, entry.lines))
+    return refined
+
+
+def _market_risk_refiner(block: DocumentBlock) -> list[RefinedBlock]:
+    if block.item != "Item 7A. Quantitative and Qualitative Disclosures About Market Risk":
+        return []
+    split_blocks = _split_lines_by_headings(block, block.item, hints=MARKET_RISK_HEADING_HINTS, allow_subsubsections=True)
+    if not split_blocks:
+        split_blocks = [_make_block(block, block.item, None, "narrative", [_normalize_text_line(line.text) for line in block.lines if _normalize_text_line(line.text)])]
+    refined: list[RefinedBlock] = []
+    for entry in split_blocks:
+        refined.append(entry)
+        refined.extend(_extract_fact_blocks(block, block.item, entry.subsection, entry.subsubsection, entry.lines))
+    return refined
+
+
+def _item8_refiner(block: DocumentBlock) -> list[RefinedBlock]:
+    if block.item != "Item 8. Financial Statements and Supplementary Data":
+        return []
+    refined = _extract_generic_table_blocks(block, block.item)
+    split_blocks = _split_lines_by_headings(block, block.item, hints=ITEM8_HEADING_HINTS, allow_subsubsections=True)
+    for entry in split_blocks:
+        refined.append(entry)
+        refined.extend(_extract_fact_blocks(block, block.item, entry.subsection, entry.subsubsection, entry.lines))
+    return refined or _default_item_refiner(block)
+
+
 def _is_mda_heading(line: str) -> bool:
     if line in MDA_HEADING_HINTS:
         return True
@@ -679,16 +1110,26 @@ def _mda_refiner(block: DocumentBlock) -> list[RefinedBlock]:
 
 def _get_refiner(block: DocumentBlock):
     joined_text = " ".join(line.text for line in block.lines)
-    if EXECUTIVE_OFFICERS_SECTION.casefold() in joined_text.casefold():
+    if block.item is None and EXECUTIVE_OFFICERS_SECTION.casefold() in joined_text.casefold():
         return _executive_refiner
     if block.label == "Overview":
         return _overview_refiner
     if block.item == ITEM_1A_SECTION:
         return _risk_factor_refiner
+    if block.item == "Item 1. Business":
+        return _business_refiner
+    if block.item == "Item 2. Properties":
+        return _properties_refiner
+    if block.item == "Item 3. Legal Proceedings":
+        return _legal_proceedings_refiner
     if block.item == PRIMARY_TABLE_SECTION:
         return _financial_table_refiner
     if block.item == ITEM_7_SECTION:
         return _mda_refiner
+    if block.item == "Item 7A. Quantitative and Qualitative Disclosures About Market Risk":
+        return _market_risk_refiner
+    if block.item == "Item 8. Financial Statements and Supplementary Data":
+        return _item8_refiner
     return _default_item_refiner
 
 
@@ -717,17 +1158,17 @@ def _split_text_to_chunks(lines: list[str]) -> list[str]:
 
 def _build_document_from_block(block: RefinedBlock, path: Path, updated_at: str, source_uri: str, company_name: str, filing_type: str | None, fiscal_year: str | None, content: str) -> ChunkDocument:
     if block.block_type == "table_row":
-        chunk_id = _build_chunk_id(AMAZON_10K_DOC_ID, "table_row", block.item or "", block.metric or "", block.year or "")
+        chunk_id = _build_chunk_id(AMAZON_10K_DOC_ID, "table_row", block.item or "", block.subsection or "", block.metric or "", block.year or "")
     elif block.block_type == "table_block":
-        chunk_id = _build_chunk_id(AMAZON_10K_DOC_ID, "table_block", block.item or "", block.table_name or "")
+        chunk_id = _build_chunk_id(AMAZON_10K_DOC_ID, "table_block", block.item or "", block.subsection or "", block.table_name or "")
     elif block.block_type == "profile_row":
         chunk_id = _build_chunk_id(AMAZON_10K_DOC_ID, "profile_row", block.section, block.entity_name or "")
     elif block.block_type == "profile_bio":
         chunk_id = _build_chunk_id(AMAZON_10K_DOC_ID, "profile_bio", block.section, block.entity_name or "")
     elif block.block_type == "fact":
-        chunk_id = _build_chunk_id(AMAZON_10K_DOC_ID, "fact", block.section, block.subsection or "", content)
+        chunk_id = _build_chunk_id(AMAZON_10K_DOC_ID, "fact", block.section, block.subsection or "", block.subsubsection or "", content)
     else:
-        chunk_id = _build_chunk_id(AMAZON_10K_DOC_ID, "narrative", block.section, block.subsection or "", str(block.page_start or ""), str(block.page_end or ""), content)
+        chunk_id = _build_chunk_id(AMAZON_10K_DOC_ID, "narrative", block.section, block.subsection or "", block.subsubsection or "", str(block.page_start or ""), str(block.page_end or ""), content)
     return ChunkDocument(
         chunk_id=chunk_id,
         doc_id=AMAZON_10K_DOC_ID,
@@ -741,6 +1182,7 @@ def _build_document_from_block(block: RefinedBlock, path: Path, updated_at: str,
         part=block.part,
         item=block.item,
         subsection=block.subsection,
+        subsubsection=block.subsubsection,
         page_start=block.page_start,
         page_end=block.page_end,
         filing_type=filing_type,
@@ -793,6 +1235,23 @@ def _validate_documents(documents: list[ChunkDocument]) -> None:
     item6_rows = [(doc.metric, doc.year) for doc in documents if doc.section == PRIMARY_TABLE_SECTION and doc.content_type == "table_row"]
     if len(item6_rows) != len(set(item6_rows)):
         raise RuntimeError("Item 6 emitted duplicate metric/year rows.")
+    item8_blocks = [(doc.subsection, doc.table_name) for doc in documents if doc.section == "Item 8. Financial Statements and Supplementary Data" and doc.content_type == "table_block"]
+    if len(item8_blocks) != len(set(item8_blocks)):
+        raise RuntimeError("Item 8 emitted duplicate statement table blocks.")
+    generalized_rows = [
+        (doc.section, doc.subsection, doc.metric, doc.year)
+        for doc in documents
+        if doc.content_type == "table_row"
+    ]
+    if len(generalized_rows) != len(set(generalized_rows)):
+        raise RuntimeError("Duplicate table rows detected across refined item sections.")
+    generalized_facts = [
+        (doc.section, doc.subsection, doc.subsubsection, doc.content)
+        for doc in documents
+        if doc.content_type == "fact"
+    ]
+    if len(generalized_facts) != len(set(generalized_facts)):
+        raise RuntimeError("Duplicate fact chunks detected across refined item sections.")
     profile_rows = [doc.entity_name for doc in documents if doc.content_type == "profile_row"]
     if len(profile_rows) != len(set(profile_rows)):
         raise RuntimeError("Duplicate executive profile rows detected.")
