@@ -13,12 +13,33 @@ from app.backend.config import get_aws_region
 from app.backend.llm_client import LLMClientError, generate_embedding
 
 TARGET_DOC_ID = "amazon_10k_2019"
+TARGET_INDEX_VERSION = "v2_parser_foundation"
 VECTOR_FIELD = "embedding"
 LEXICAL_CANDIDATE_MULTIPLIER = 3
 VECTOR_CANDIDATE_MULTIPLIER = 3
 MIN_VECTOR_DIMENSIONS = 8
 LEXICAL_WEIGHT = 0.8
 VECTOR_WEIGHT = 0.2
+EXECUTIVE_QUERY_HINTS = (
+    "executive officer",
+    "executive officers",
+    "leadership",
+    "directors",
+    "board of directors",
+    "chief executive officer",
+)
+RISK_HEADING_HINTS = (
+    "risk factor",
+    "could harm our business",
+    "loss of key senior management personnel",
+)
+NUMERIC_QUERY_HINTS = (
+    "net sales",
+    "operating income",
+    "selected consolidated financial data",
+    "2019",
+    "2018",
+)
 
 
 @dataclass
@@ -48,6 +69,8 @@ class RetrievedChunk:
     value_raw: str | None = None
     value_normalized: float | None = None
     unit: str | None = None
+    entity_name: str | None = None
+    entity_role: str | None = None
     embedding: list[float] | None = None
 
 
@@ -105,10 +128,77 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
 
 
 def _build_doc_filter() -> list[dict[str, object]]:
-    return [{"term": {"doc_id.keyword": TARGET_DOC_ID}}]
+    return [
+        {"term": {"doc_id.keyword": TARGET_DOC_ID}},
+        {"term": {"index_version": TARGET_INDEX_VERSION}},
+    ]
+
+
+def _classify_query_intent(question: str) -> str:
+    normalized = question.casefold()
+    if any(hint in normalized for hint in NUMERIC_QUERY_HINTS):
+        return "numeric_table"
+    if normalized.startswith("who is ") or normalized.startswith("who are "):
+        return "entity_lookup"
+    if any(hint in normalized for hint in EXECUTIVE_QUERY_HINTS):
+        return "entity_lookup"
+    if any(hint in normalized for hint in RISK_HEADING_HINTS) or (len(question.split()) >= 8 and question[:1].isupper()):
+        return "heading_lookup"
+    if "management" in normalized or "results of operations" in normalized or "liquidity" in normalized:
+        return "narrative_explainer"
+    return "general_lookup"
+
+
+def _expand_query(question: str, intent: str) -> str:
+    if intent == "entity_lookup":
+        return f"{question} Information About Our Executive Officers Executive Officers and Directors Board of Directors leadership"
+    if intent == "heading_lookup":
+        return f"{question} Item 1A Risk Factors subsection heading"
+    if intent == "numeric_table":
+        return f"{question} Selected Consolidated Financial Data table"
+    return question
+
+
+def _fields_for_intent(intent: str, phrase: bool = False) -> list[str]:
+    base_fields = [
+        "title^4",
+        "section^8",
+        "item^4",
+        "subsection^8",
+        "table_name^8",
+        "metric^6",
+        "year^5",
+        "content^4",
+        "entity_name^6",
+        "entity_role^4",
+        "content_type^3",
+    ]
+    if phrase:
+        base_fields = [
+            "title^8",
+            "section^12",
+            "item^8",
+            "subsection^12",
+            "table_name^12",
+            "metric^10",
+            "year^8",
+            "content^6",
+            "entity_name^10",
+            "entity_role^6",
+            "content_type^4",
+        ]
+    if intent == "numeric_table":
+        return [field.replace("metric^6", "metric^12").replace("table_name^8", "table_name^12").replace("year^5", "year^10") for field in base_fields]
+    if intent == "entity_lookup":
+        return [field.replace("entity_name^6", "entity_name^14").replace("entity_role^4", "entity_role^10").replace("subsection^8", "subsection^10") for field in base_fields]
+    if intent == "heading_lookup":
+        return [field.replace("subsection^8", "subsection^16").replace("section^8", "section^10") for field in base_fields]
+    return base_fields
 
 
 def _build_lexical_query(question: str, top_k: int) -> dict[str, object]:
+    intent = _classify_query_intent(question)
+    expanded_question = _expand_query(question, intent)
     return {
         "size": max(top_k * LEXICAL_CANDIDATE_MULTIPLIER, top_k),
         "query": {
@@ -117,34 +207,16 @@ def _build_lexical_query(question: str, top_k: int) -> dict[str, object]:
                 "should": [
                     {
                         "multi_match": {
-                            "query": question,
-                            "fields": [
-                                "title^4",
-                                "section^4",
-                                "item^4",
-                                "subsection^3",
-                                "table_name^3",
-                                "metric^6",
-                                "year^5",
-                                "content^2",
-                            ],
+                            "query": expanded_question,
+                            "fields": _fields_for_intent(intent),
                             "type": "best_fields",
                             "operator": "or",
                         }
                     },
                     {
                         "multi_match": {
-                            "query": question,
-                            "fields": [
-                                "title^8",
-                                "section^8",
-                                "item^8",
-                                "subsection^5",
-                                "table_name^6",
-                                "metric^10",
-                                "year^8",
-                                "content^3",
-                            ],
+                            "query": expanded_question,
+                            "fields": _fields_for_intent(intent, phrase=True),
                             "type": "phrase",
                             "slop": 1,
                         }
@@ -202,6 +274,8 @@ def _normalize_hit(hit: dict[str, object], lexical_score: float = 0.0, vector_sc
         value_raw=source.get("value_raw"),
         value_normalized=source.get("value_normalized"),
         unit=source.get("unit"),
+        entity_name=source.get("entity_name"),
+        entity_role=source.get("entity_role"),
         embedding=_normalize_embedding(source.get(VECTOR_FIELD)),
     )
 

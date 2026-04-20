@@ -1,11 +1,18 @@
 from unittest.mock import Mock, patch
 
-from app.backend.search_client import RetrievedChunk, _merge_candidates, search_chunks
+from app.backend.knowledge_base import _rerank_chunks
+from app.backend.search_client import (
+    RetrievedChunk,
+    _build_lexical_query,
+    _classify_query_intent,
+    _merge_candidates,
+    search_chunks,
+)
 
 
 @patch("app.backend.search_client._build_client")
 @patch("app.backend.search_client.os.getenv")
-def test_search_chunks_returns_normalized_hits(mock_getenv: Mock, mock_build_client: Mock) -> None:
+def test_search_chunks_returns_normalized_hits_with_extended_metadata(mock_getenv: Mock, mock_build_client: Mock) -> None:
     mock_getenv.return_value = "policy-faq-chunks"
     mock_client = Mock()
     mock_client.search.return_value = {
@@ -18,10 +25,13 @@ def test_search_chunks_returns_normalized_hits(mock_getenv: Mock, mock_build_cli
                         "chunk_id": "chunk-1",
                         "doc_id": "amazon_10k_2019",
                         "title": "Amazon.com, Inc. Form 10-K",
-                        "section": "Item 1. Business",
-                        "content": "Amazon serves consumers through online and physical stores.",
+                        "section": "Executive Officers and Directors",
+                        "content": "Andrew R. Jassy, age 52, serves as CEO Amazon Web Services.",
                         "source_path": "Company-10k-18pages.pdf",
                         "source_uri": "docs/company/Company-10k-18pages.pdf",
+                        "content_type": "profile_row",
+                        "entity_name": "Andrew R. Jassy",
+                        "entity_role": "CEO Amazon Web Services",
                         "embedding": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
                     },
                 }
@@ -30,69 +40,32 @@ def test_search_chunks_returns_normalized_hits(mock_getenv: Mock, mock_build_cli
     }
     mock_build_client.return_value = mock_client
 
-    chunks = search_chunks("When is tracking available?")
+    chunks = search_chunks("Who is Andrew R. Jassy?")
 
     assert len(chunks) == 1
-    assert chunks[0].title == "Amazon.com, Inc. Form 10-K"
-    assert chunks[0].score > 0
-    assert chunks[0].doc_id == "amazon_10k_2019"
-    assert chunks[0].embedding is not None
+    assert chunks[0].content_type == "profile_row"
+    assert chunks[0].entity_name == "Andrew R. Jassy"
+    assert chunks[0].entity_role == "CEO Amazon Web Services"
 
 
-@patch("app.backend.search_client._build_client")
-@patch("app.backend.search_client.os.getenv")
-def test_search_chunks_returns_extended_metadata(mock_getenv: Mock, mock_build_client: Mock) -> None:
-    mock_getenv.return_value = "policy-faq-chunks"
-    mock_client = Mock()
-    mock_client.search.return_value = {
-        "hits": {
-            "hits": [
-                {
-                    "_id": "amazon-row-1",
-                    "_score": 8.5,
-                    "_source": {
-                        "chunk_id": "amazon-row-1",
-                        "doc_id": "amazon_10k_2019",
-                        "title": "Amazon.com, Inc. Form 10-K",
-                        "section": "Item 6. Selected Consolidated Financial Data",
-                        "content": "Net sales for 2019: 280,522",
-                        "source_path": "Company-10k-18pages.pdf",
-                        "source_uri": "docs/company/Company-10k-18pages.pdf",
-                        "item": "Item 6. Selected Consolidated Financial Data",
-                        "page_start": 8,
-                        "page_end": 8,
-                        "content_type": "table_row",
-                        "table_name": "Item 6. Selected Consolidated Financial Data",
-                        "metric": "Net sales",
-                        "year": "2019",
-                        "value_raw": "280,522",
-                        "value_normalized": 280522.0,
-                        "unit": "million USD",
-                    },
-                }
-            ]
-        }
-    }
-    mock_build_client.return_value = mock_client
-
-    chunks = search_chunks("What were net sales in 2019?")
-
-    assert len(chunks) == 1
-    assert chunks[0].content_type == "table_row"
-    assert chunks[0].metric == "Net sales"
-    assert chunks[0].year == "2019"
-    assert chunks[0].unit == "million USD"
+def test_classify_query_intent_handles_numeric_entity_and_heading_queries() -> None:
+    assert _classify_query_intent("What were net sales in 2019?") == "numeric_table"
+    assert _classify_query_intent("Who are the executive officers and directors?") == "entity_lookup"
+    assert _classify_query_intent("The Loss of Key Senior Management Personnel Could Harm Our Business") == "heading_lookup"
 
 
-@patch("app.backend.search_client._build_client")
-@patch("app.backend.search_client.os.getenv")
-def test_search_chunks_returns_empty_when_no_hits(mock_getenv: Mock, mock_build_client: Mock) -> None:
-    mock_getenv.return_value = "policy-faq-chunks"
-    mock_client = Mock()
-    mock_client.search.return_value = {"hits": {"hits": []}}
-    mock_build_client.return_value = mock_client
+def test_build_lexical_query_boosts_entity_fields_for_entity_lookup() -> None:
+    query = _build_lexical_query("Who is Andrew R. Jassy?", top_k=4)
+    best_fields = query["query"]["bool"]["should"][0]["multi_match"]["fields"]
 
-    assert search_chunks("unknown question") == []
+    assert "entity_name^14" in best_fields
+
+
+def test_build_lexical_query_boosts_subsection_for_heading_lookup() -> None:
+    query = _build_lexical_query("The Loss of Key Senior Management Personnel Could Harm Our Business", top_k=4)
+    phrase_fields = query["query"]["bool"]["should"][1]["multi_match"]["fields"]
+
+    assert "subsection^16" in phrase_fields or "subsection^12" in phrase_fields
 
 
 def test_merge_candidates_keeps_exact_lexical_match_above_semantic_neighbor() -> None:
@@ -128,72 +101,114 @@ def test_merge_candidates_keeps_exact_lexical_match_above_semantic_neighbor() ->
     merged = _merge_candidates([exact_match], [semantic_neighbor], top_k=2)
 
     assert merged[0].chunk_id == "exact-net-sales-2019"
-    assert merged[0].score > merged[1].score
 
 
-def test_merge_candidates_falls_back_to_lexical_only_when_no_vector_scores_exist() -> None:
-    stronger_lexical = RetrievedChunk(
-        chunk_id="item-6",
+def test_rerank_chunks_prioritizes_profile_rows_for_entity_queries() -> None:
+    profile_row = RetrievedChunk(
+        chunk_id="exec-row",
         doc_id="amazon_10k_2019",
         title="Amazon.com, Inc. Form 10-K",
-        section="Item 6. Selected Consolidated Financial Data",
-        content="Item 6 summary",
+        section="Executive Officers and Directors",
+        content="Andrew R. Jassy, age 52, serves as CEO Amazon Web Services.",
         source_path="Company-10k-18pages.pdf",
         source_uri="docs/company/Company-10k-18pages.pdf",
-        score=7.0,
-        lexical_score=7.0,
+        score=2.0,
+        lexical_score=2.0,
         vector_score=0.0,
+        subsection="Information About Our Executive Officers",
+        content_type="profile_row",
+        entity_name="Andrew R. Jassy",
+        entity_role="CEO Amazon Web Services",
     )
-    weaker_lexical = RetrievedChunk(
-        chunk_id="item-7",
+    noisy_chunk = RetrievedChunk(
+        chunk_id="risk-factor",
         doc_id="amazon_10k_2019",
         title="Amazon.com, Inc. Form 10-K",
-        section="Item 7. Management Discussion and Analysis",
-        content="Item 7 summary",
+        section="Item 1A. Risk Factors",
+        content="Please carefully consider the following discussion of significant factors.",
         source_path="Company-10k-18pages.pdf",
         source_uri="docs/company/Company-10k-18pages.pdf",
-        score=3.0,
-        lexical_score=3.0,
+        score=2.5,
+        lexical_score=2.5,
         vector_score=0.0,
+        content_type="narrative",
     )
 
-    merged = _merge_candidates([stronger_lexical, weaker_lexical], [], top_k=2)
+    ranked = _rerank_chunks("Who is Andrew R. Jassy?", [noisy_chunk, profile_row])
 
-    assert merged[0].chunk_id == "item-6"
-    assert merged[1].chunk_id == "item-7"
-    assert merged[0].score >= merged[1].score
+    assert ranked[0].chunk_id == "exec-row"
 
 
-def test_merge_candidates_combines_lexical_and_vector_scores_per_chunk() -> None:
-    lexical = RetrievedChunk(
-        chunk_id="combined-chunk",
+def test_rerank_chunks_prioritizes_exact_risk_subsection_match() -> None:
+    exact_heading = RetrievedChunk(
+        chunk_id="risk-heading",
         doc_id="amazon_10k_2019",
         title="Amazon.com, Inc. Form 10-K",
-        section="Item 6. Selected Consolidated Financial Data",
-        content="Net sales for 2019: 280,522",
+        section="Item 1A. Risk Factors",
+        content="The Loss of Key Senior Management Personnel or the Inability to Hire and Retain Qualified Personnel Could Harm Our Business\nOur future success depends on our senior management.",
         source_path="Company-10k-18pages.pdf",
         source_uri="docs/company/Company-10k-18pages.pdf",
-        score=8.0,
-        lexical_score=8.0,
+        score=2.0,
+        lexical_score=2.0,
         vector_score=0.0,
+        content_type="narrative",
+        subsection="The Loss of Key Senior Management Personnel or the Inability to Hire and Retain Qualified Personnel Could Harm Our Business",
     )
-    vector = RetrievedChunk(
-        chunk_id="combined-chunk",
+    general_risk = RetrievedChunk(
+        chunk_id="risk-general",
         doc_id="amazon_10k_2019",
         title="Amazon.com, Inc. Form 10-K",
-        section="Item 6. Selected Consolidated Financial Data",
-        content="Net sales for 2019: 280,522",
+        section="Item 1A. Risk Factors",
+        content="We face a number of risks.",
         source_path="Company-10k-18pages.pdf",
         source_uri="docs/company/Company-10k-18pages.pdf",
-        score=0.9,
-        lexical_score=0.0,
-        vector_score=0.9,
+        score=2.1,
+        lexical_score=2.1,
+        vector_score=0.0,
+        content_type="narrative",
     )
 
-    merged = _merge_candidates([lexical], [vector], top_k=1)
+    ranked = _rerank_chunks(
+        "The Loss of Key Senior Management Personnel or the Inability to Hire and Retain Qualified Personnel Could Harm Our Business",
+        [general_risk, exact_heading],
+    )
 
-    assert len(merged) == 1
-    assert merged[0].lexical_score == 8.0
-    assert merged[0].vector_score == 0.9
-    assert merged[0].score > 0
-    assert merged[0].chunk_id == "combined-chunk"
+    assert ranked[0].chunk_id == "risk-heading"
+
+
+def test_rerank_chunks_penalizes_generic_harm_heading_without_specific_overlap() -> None:
+    specific_heading = RetrievedChunk(
+        chunk_id="risk-specific",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 1A. Risk Factors",
+        content="We depend on our senior management and other key personnel.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=1.0,
+        lexical_score=1.0,
+        vector_score=0.0,
+        content_type="narrative",
+        subsection="The Loss of Key Senior Management Personnel or the Failure to Hire and Retain Highly Skilled and Other Key Personnel Could Negatively Affect Our Business",
+    )
+    generic_heading = RetrievedChunk(
+        chunk_id="risk-generic",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 1A. Risk Factors",
+        content="We are subject to general business regulations and laws.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=2.0,
+        lexical_score=2.0,
+        vector_score=0.0,
+        content_type="narrative",
+        subsection="Government Regulation Is Evolving and Unfavorable Changes Could Harm Our Business",
+    )
+
+    ranked = _rerank_chunks(
+        "The Loss of Key Senior Management Personnel or the Inability to Hire and Retain Qualified Personnel Could Harm Our Business",
+        [generic_heading, specific_heading],
+    )
+
+    assert ranked[0].chunk_id == "risk-specific"

@@ -4,12 +4,16 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.backend.main import app
-from app.backend.models import SourceItem
+from app.backend.models import Intent, SessionState, SourceItem
 
 
 EVENT_VERSION = 1
 STREAMING_ORDER_FALLBACK_MESSAGE = "Streaming is only available for knowledge questions."
 client = TestClient(app)
+
+
+def _session_state() -> SessionState:
+    return SessionState(session_id="test-session", current_intent=Intent.KNOWLEDGE_QA)
 
 
 def test_health_returns_ok() -> None:
@@ -19,7 +23,12 @@ def test_health_returns_ok() -> None:
     assert response.json() == {"status": "ok"}
 
 
-def test_chat_returns_mock_order_flow_response() -> None:
+@patch("app.backend.orchestrator.session_store.save")
+@patch("app.backend.orchestrator.session_store.append_message")
+@patch("app.backend.orchestrator.session_store.load")
+def test_chat_returns_mock_order_flow_response(mock_load, mock_append, mock_save) -> None:
+    mock_load.return_value = _session_state()
+    mock_append.return_value = _session_state()
     response = client.post(
         "/chat",
         json={
@@ -36,8 +45,13 @@ def test_chat_returns_mock_order_flow_response() -> None:
     assert payload["verification_state"]["missing_fields"] == ["full_name", "date_of_birth", "ssn_last4"]
 
 
+@patch("app.backend.orchestrator.session_store.save")
+@patch("app.backend.orchestrator.session_store.append_message")
+@patch("app.backend.orchestrator.session_store.load")
 @patch("app.backend.orchestrator.answer_question")
-def test_chat_returns_numeric_knowledge_response_with_source_metadata(mock_answer_question) -> None:
+def test_chat_returns_numeric_knowledge_response_with_source_metadata(mock_answer_question, mock_load, mock_append, mock_save) -> None:
+    mock_load.return_value = _session_state()
+    mock_append.return_value = _session_state()
     mock_answer_question.return_value = (
         "Net sales were 280,522 in 2019.",
         [
@@ -45,6 +59,7 @@ def test_chat_returns_numeric_knowledge_response_with_source_metadata(mock_answe
                 source_id="amazon-row-1",
                 title="Item 6. Selected Consolidated Financial Data - Net sales (2019)",
                 snippet="Net sales for 2019: 280,522",
+                content_type="table_row",
                 item="Item 6. Selected Consolidated Financial Data",
                 page_start=8,
                 page_end=8,
@@ -78,8 +93,13 @@ def test_chat_returns_numeric_knowledge_response_with_source_metadata(mock_answe
     mock_answer_question.assert_called_once_with("What were net sales in 2019?")
 
 
+@patch("app.backend.orchestrator.session_store.save")
+@patch("app.backend.orchestrator.session_store.append_message")
+@patch("app.backend.orchestrator.session_store.load")
 @patch("app.backend.orchestrator.stream_answer_question")
-def test_chat_stream_returns_sse_delta_and_final_events(mock_stream_answer_question) -> None:
+def test_chat_stream_returns_sse_delta_and_final_events(mock_stream_answer_question, mock_load, mock_append, mock_save) -> None:
+    mock_load.return_value = _session_state()
+    mock_append.return_value = _session_state()
     mock_stream_answer_question.return_value = (
         iter(["Net sales ", "were 280,522 in 2019."]),
         [
@@ -87,6 +107,7 @@ def test_chat_stream_returns_sse_delta_and_final_events(mock_stream_answer_quest
                 source_id="amazon-row-1",
                 title="Item 6. Selected Consolidated Financial Data - Net sales (2019)",
                 snippet="Net sales for 2019: 280,522",
+                content_type="table_row",
                 item="Item 6. Selected Consolidated Financial Data",
                 page_start=8,
                 page_end=8,
@@ -116,8 +137,12 @@ def test_chat_stream_returns_sse_delta_and_final_events(mock_stream_answer_quest
     assert '"full_answer": "Net sales were 280,522 in 2019."' in body
 
 
+@patch("app.backend.orchestrator.session_store.append_message")
+@patch("app.backend.orchestrator.session_store.load")
 @patch("app.backend.orchestrator.stream_answer_question")
-def test_chat_stream_returns_terminal_error_event_when_stream_fails(mock_stream_answer_question) -> None:
+def test_chat_stream_returns_terminal_error_event_when_stream_fails(mock_stream_answer_question, mock_load, mock_append) -> None:
+    mock_load.return_value = _session_state()
+    mock_append.return_value = _session_state()
     def failing_stream():
         yield "partial"
         raise RuntimeError("boom")
@@ -142,7 +167,9 @@ def test_chat_stream_returns_terminal_error_event_when_stream_fails(mock_stream_
     assert '"session_update_status": "not_committed"' in body
 
 
-def test_chat_stream_rejects_order_status_requests() -> None:
+@patch("app.backend.orchestrator.session_store.load")
+def test_chat_stream_rejects_order_status_requests(mock_load) -> None:
+    mock_load.return_value = _session_state()
     response = client.post(
         "/chat/stream",
         json={
@@ -155,8 +182,13 @@ def test_chat_stream_rejects_order_status_requests() -> None:
     assert response.json() == {"detail": STREAMING_ORDER_FALLBACK_MESSAGE}
 
 
+@patch("app.backend.orchestrator.session_store.save")
+@patch("app.backend.orchestrator.session_store.append_message")
+@patch("app.backend.orchestrator.session_store.load")
 @patch("app.backend.orchestrator.stream_answer_question")
-def test_chat_stream_final_event_contains_sources_metadata(mock_stream_answer_question) -> None:
+def test_chat_stream_final_event_contains_sources_metadata(mock_stream_answer_question, mock_load, mock_append, mock_save) -> None:
+    mock_load.return_value = _session_state()
+    mock_append.return_value = _session_state()
     mock_stream_answer_question.return_value = (
         iter(["Item 6 includes net sales."]),
         [
@@ -164,6 +196,7 @@ def test_chat_stream_final_event_contains_sources_metadata(mock_stream_answer_qu
                 source_id="amazon-row-1",
                 title="Item 6. Selected Consolidated Financial Data - Net sales (2019)",
                 snippet="Net sales for 2019: 280,522",
+                content_type="table_row",
                 item="Item 6. Selected Consolidated Financial Data",
                 page_start=8,
                 page_end=8,
@@ -200,8 +233,13 @@ def test_chat_stream_final_event_contains_sources_metadata(mock_stream_answer_qu
     mock_stream_answer_question.assert_called_once_with("What is Item 6?")
 
 
+@patch("app.backend.orchestrator.session_store.save")
+@patch("app.backend.orchestrator.session_store.append_message")
+@patch("app.backend.orchestrator.session_store.load")
 @patch("app.backend.orchestrator.answer_question")
-def test_chat_order_flow_still_works_after_stream_addition(mock_answer_question) -> None:
+def test_chat_order_flow_still_works_after_stream_addition(mock_answer_question, mock_load, mock_append, mock_save) -> None:
+    mock_load.return_value = _session_state()
+    mock_append.return_value = _session_state()
     response = client.post(
         "/chat",
         json={

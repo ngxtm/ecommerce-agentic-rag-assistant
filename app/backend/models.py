@@ -39,10 +39,13 @@ class SourceItem(BaseModel):
     source_id: str
     title: str
     snippet: str
+    content_type: str | None = None
     item: str | None = None
     subsection: str | None = None
     page_start: int | None = None
     page_end: int | None = None
+    entity_name: str | None = None
+    entity_role: str | None = None
     metric: str | None = None
     year: str | None = None
     table_name: str | None = None
