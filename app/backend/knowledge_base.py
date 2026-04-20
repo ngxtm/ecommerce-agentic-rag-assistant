@@ -407,6 +407,32 @@ def _format_context(chunks: list[RetrievedChunk]) -> str:
     return "\n\n".join(sections)
 
 
+def _is_cross_reference_only(chunk: RetrievedChunk) -> bool:
+    content = chunk.content.casefold()
+    if chunk.content_type not in {"narrative", "fact", "table_block"}:
+        return False
+    return content.startswith("see item ") or content.startswith("see note ") or content.startswith("refer to ")
+
+
+def _grounded_narrative_answer(question: str, chunks: list[RetrievedChunk]) -> str | None:
+    intent = _classify_question_intent(question)
+    if intent != "narrative_explainer" or not chunks:
+        return None
+
+    expected_items = _expected_items(question)
+    if expected_items and not any(chunk.item in expected_items for chunk in chunks):
+        return CONSERVATIVE_FALLBACK
+
+    if expected_items == {"Item 3. Legal Proceedings"}:
+        lead = chunks[0]
+        if _is_cross_reference_only(lead):
+            return (
+                "The available context indicates there were legal proceedings, but it only provides a cross-reference "
+                "to another section and does not include enough grounded detail to say more confidently."
+            )
+    return None
+
+
 def _build_messages(question: str, context: str) -> list[dict[str, str]]:
     system_prompt = (
         "You are a customer support knowledge assistant. Answer only from the provided context. "
@@ -454,6 +480,9 @@ def generate_grounded_answer(question: str, chunks: list[RetrievedChunk]) -> str
             row = exact_rows[0]
             unit = f" {row.unit}" if row.unit else ""
             return f"{row.metric} in {row.year} were **{row.value_raw}{unit}**."
+    narrative_answer = _grounded_narrative_answer(question, chunks)
+    if narrative_answer is not None:
+        return narrative_answer
     answer = generate_chat_completion(_build_messages(question, _format_context(chunks)))
     return answer or CONSERVATIVE_FALLBACK
 
@@ -523,14 +552,69 @@ def _build_source_semantic_key(chunk: RetrievedChunk) -> str:
     return f"{chunk.doc_id}:{chunk.content_type}:{chunk.section}:{chunk.subsection}:{chunk.subsubsection}"
 
 
-def _build_sources(chunks: list[RetrievedChunk]) -> list[SourceItem]:
-    seen: set[str] = set()
-    sources: list[SourceItem] = []
-    for chunk in chunks:
-        source_key = _build_source_semantic_key(chunk)
-        if source_key in seen:
+def _source_diversity_key(chunk: RetrievedChunk) -> str:
+    return f"{chunk.doc_id}:{chunk.section}:{chunk.item}:{chunk.subsection}:{chunk.subsubsection}"
+
+
+def _source_priority(chunk: RetrievedChunk) -> tuple[int, float]:
+    content_rank = {
+        "table_row": 5,
+        "profile_row": 5,
+        "profile_bio": 4,
+        "fact": 4,
+        "table_block": 3,
+        "narrative": 2,
+    }
+    return (content_rank.get(chunk.content_type or "", 1), chunk.score)
+
+
+def _heading_source_match_score(question: str, chunk: RetrievedChunk) -> int:
+    heading_text = _heading_query_text(question)
+    if not heading_text or chunk.section != "Item 1A. Risk Factors":
+        return 0
+    subsection = (chunk.subsection or "").casefold()
+    if not subsection:
+        return 0
+    if heading_text.casefold() == subsection:
+        return 100
+    question_tokens = _heading_specific_tokens(question)
+    subsection_tokens = set(re.findall(r"[a-z0-9]+", subsection))
+    return len(question_tokens & subsection_tokens)
+
+
+def _trim_source_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    active_question = os.getenv("KB_ACTIVE_QUESTION", "")
+    if _classify_question_intent(active_question) == "heading_lookup":
+        scored_heading_chunks = [
+            (chunk, _heading_source_match_score(active_question, chunk))
+            for chunk in chunks
+        ]
+        max_match_score = max((score for _, score in scored_heading_chunks), default=0)
+        if max_match_score > 0:
+            chunks = [chunk for chunk, score in scored_heading_chunks if score == max_match_score]
+
+    selected: list[RetrievedChunk] = []
+    seen_semantic: set[str] = set()
+    seen_diversity: set[str] = set()
+    max_sources = 6
+    for chunk in sorted(chunks, key=_source_priority, reverse=True):
+        semantic_key = _build_source_semantic_key(chunk)
+        if semantic_key in seen_semantic:
             continue
-        seen.add(source_key)
+        diversity_key = _source_diversity_key(chunk)
+        if diversity_key in seen_diversity and chunk.content_type == "narrative":
+            continue
+        seen_semantic.add(semantic_key)
+        seen_diversity.add(diversity_key)
+        selected.append(chunk)
+        if len(selected) >= max_sources:
+            break
+    return selected
+
+
+def _build_sources(chunks: list[RetrievedChunk]) -> list[SourceItem]:
+    sources: list[SourceItem] = []
+    for chunk in _trim_source_chunks(chunks):
         sources.append(
             SourceItem(
                 source_id=chunk.chunk_id,

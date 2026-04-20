@@ -378,6 +378,94 @@ def test_build_sources_formats_item8_table_block_with_specific_statement_title()
     )
 
 
+def test_build_sources_trims_duplicate_narrative_from_same_subsection() -> None:
+    first = RetrievedChunk(
+        chunk_id="item2-narrative-1",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 2. Properties",
+        content="As of December 31, 2019, we operated office space and data centers worldwide.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=5.0,
+        lexical_score=5.0,
+        vector_score=0.0,
+        item="Item 2. Properties",
+        content_type="narrative",
+    )
+    duplicate = RetrievedChunk(**{**first.__dict__, "chunk_id": "item2-narrative-2", "score": 4.8, "lexical_score": 4.8})
+
+    sources = _build_sources([first, duplicate])
+
+    assert len(sources) == 1
+    assert sources[0].source_id == "item2-narrative-1"
+
+
+def test_generate_grounded_answer_is_conservative_for_legal_cross_reference_only() -> None:
+    legal_xref = RetrievedChunk(
+        chunk_id="item3-xref",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 3. Legal Proceedings",
+        content="See Item 8 of Part II, Financial Statements and Supplementary Data - Note 7 - Commitments and Contingencies - Legal Proceedings.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=4.2,
+        lexical_score=4.2,
+        vector_score=0.0,
+        item="Item 3. Legal Proceedings",
+        content_type="narrative",
+    )
+
+    answer = generate_grounded_answer("Were there any legal proceedings?", [legal_xref])
+
+    assert "available context indicates there were legal proceedings" in answer.casefold()
+    assert "cross-reference" in answer.casefold()
+    assert "does not include enough grounded detail" in answer.casefold()
+
+
+@patch.dict("os.environ", {"KB_ACTIVE_QUESTION": "The Loss of Key Senior Management Personnel or the Inability to Hire and Retain Qualified Personnel Could Harm Our Business"}, clear=False)
+def test_build_sources_for_heading_lookup_keeps_only_best_matching_risk_heading() -> None:
+    best_match = RetrievedChunk(
+        chunk_id="risk-best",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 1A. Risk Factors",
+        content=(
+            "The Loss of Key Senior Management Personnel or the Failure to Hire and Retain Highly Skilled and Other Key Personnel "
+            "Could Negatively Affect Our Business\nWe depend on our senior management and other key personnel."
+        ),
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=5.0,
+        lexical_score=5.0,
+        vector_score=0.0,
+        item="Item 1A. Risk Factors",
+        subsection="The Loss of Key Senior Management Personnel or the Failure to Hire and Retain Highly Skilled and Other Key Personnel Could Negatively Affect Our Business",
+        content_type="narrative",
+    )
+    noisy_match = RetrievedChunk(
+        chunk_id="risk-noise",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 1A. Risk Factors",
+        content="Our digital content offerings depend on effective digital rights management technology.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=4.7,
+        lexical_score=4.7,
+        vector_score=0.0,
+        item="Item 1A. Risk Factors",
+        subsection="Intellectual Property Rights and Being Accused of Infringing",
+        content_type="narrative",
+    )
+
+    sources = _build_sources([best_match, noisy_match])
+
+    assert len(sources) == 1
+    assert sources[0].source_id == "risk-best"
+
+
 @patch("app.backend.knowledge_base.generate_grounded_answer_stream")
 @patch("app.backend.knowledge_base.retrieve_relevant_chunks")
 def test_stream_answer_question_returns_stream_and_sources(mock_retrieve: Mock, mock_stream: Mock) -> None:
