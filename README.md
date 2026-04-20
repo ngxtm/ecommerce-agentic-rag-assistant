@@ -1,123 +1,291 @@
 # Agentic Commerce Assistant
 
-Agentic conversational assistant for internal knowledge Q&A and verified order status support, built for the Cloud Kinetics Data/AI Solution Architect Intern assignment.
+Agentic Commerce Assistant is a small end-to-end support system that combines a retrieval-augmented generation pipeline for internal document Q&A with a guarded order-status workflow that requires user verification.
 
-The system supports grounded document answers, a multi-turn order verification workflow, and session memory. The backend has been deployed and verified live on AWS. The current deployed cloud path uses `Lambda + API Gateway + DynamoDB + OpenSearch Serverless + OpenAI-compatible generation`.
+The repository is designed to demonstrate two distinct backend behaviors behind one chat API:
 
-## Current Delivery Status
-- Phase 1: complete on deployed fallback path
-- Phase 2: complete
-- Phase 3: complete and deployed
-- Phase 4: submission polish in progress
+- grounded knowledge answers from an indexed document corpus
+- a multi-turn order workflow that collects identity signals before returning order status
 
-## Assignment Scope
-- answer knowledge questions from internal documents via RAG
-- handle an order status workflow with required user verification
-- maintain multi-turn session context
-- demonstrate a credible AWS deployment, observability, and IaC path
+The current deployed cloud path uses `FastAPI + AWS Lambda + API Gateway + DynamoDB + OpenSearch Serverless + OpenAI-compatible generation`.
 
-## Deployment Scope
-Phase 3 is a minimum viable cloud deployment for the assignment: deployable, testable, and interview-defensible. It is not full production hardening, so items like multi-environment rollout strategy, WAF, advanced secrets rotation, and a full monitoring stack are intentionally deferred.
+## Overview
 
-## Target Architecture
-- Frontend: `Streamlit`
-- API entry: `Amazon API Gateway`
-- Backend orchestration: `AWS Lambda`
-- RAG: `Amazon Bedrock Knowledge Bases`
-- Document store: `Amazon S3`
-- Vector store: `S3 Vectors`
-- Memory: `DynamoDB`
-- Observability: `CloudWatch Logs`, `CloudWatch Metrics`, optional `X-Ray`
+This project has two primary capabilities:
 
-## Deployed Fallback Architecture
-- Frontend: `Streamlit`
-- API entry: `Amazon API Gateway HTTP API`
-- Backend orchestration: `AWS Lambda`
-- Lambda adapter: `Mangum`
-- Retrieval: `Amazon OpenSearch Serverless`
-- Grounded generation: `OpenAI-compatible API`
-- Document store: `Amazon S3`
-- Memory: `DynamoDB`
-- Observability: `CloudWatch Logs`, optional `X-Ray`
+- `Knowledge Q&A`: answer questions from an indexed internal document corpus and return supporting sources
+- `Order Status`: collect verification details such as name, date of birth, and SSN last four before looking up an order
 
-## Known Architecture Delta
-- Target architecture: `Bedrock Knowledge Bases + S3 + S3 Vectors`
-- Deployed fallback architecture: `OpenSearch Serverless retrieval + OpenAI-compatible generation`
-- Reason: repeated Bedrock throttling, quota, and reliability blockers during implementation
-- Rationale: preserve delivery speed, demo reliability, and an interview-defensible cloud baseline without expanding scope
+At a high level, a chat request enters the backend, gets classified by intent, and is then routed into either the RAG path or the order workflow path. Conversation state is persisted so multi-turn interactions can continue across requests.
 
-## What Was Implemented
-- FastAPI backend with `GET /health` and `POST /chat`
-- Streamlit frontend connected to the backend contract
-- multi-turn order verification workflow with `full_name`, `date_of_birth`, and `ssn_last4`
-- grounded document Q&A through OpenSearch retrieval and OpenAI-compatible generation
-- 10-K-only document ingestion centered on a fixed SEC-style PDF corpus
-- 10-K-aware preprocessing with SEC `PART` / `Item` segmentation, TOC removal, and Item 6 table extraction
+## Core Capabilities
+
+- grounded document answers with retrieved source citations
+- conservative fallback when the retrieved context is insufficient
+- multi-turn order verification workflow
 - DynamoDB-backed session and message persistence
-- structured logging and PII-aware observability helpers
-- Terraform-managed Lambda, API Gateway, DynamoDB, S3, IAM, and log group resources
-- GitHub Actions CI and CD support workflows
+- optional streaming responses for knowledge queries
+- AWS deployment path managed with Terraform
 
-## Phase 3 Document Pipeline
-- The only Phase 3 demonstration corpus is `docs/company/Company-10k-18pages.pdf`.
-- The indexing pipeline is intentionally optimized for one known SEC-style 10-K family rather than generic PDF ingestion.
-- Retrieval content excludes `Table of Contents` / `INDEX` lines to avoid false hits on the outline instead of the real section text.
-- `section` is mapped to retrieval-friendly SEC labels such as `Item 1. Business`, `Item 1A. Risk Factors`, and `Item 6. Selected Consolidated Financial Data`.
-- Important Item 6 financial data is indexed in two forms:
-  - `table_row` chunks for numeric QA
-  - `table_block` chunks for broader contextual grounding
-- The first iteration keeps structured table handling deliberately narrow: Item 6 is parsed carefully, while lower-priority table-like sections fall back to text blocks.
-- Reindexing removes prior chunks for `doc_id=amazon_10k_2019` before inserting the updated PDF chunks to prevent duplicate search results.
+## How The System Works
 
-## Deployment Result
-- Phase 3 backend deployment completed successfully on AWS
-- deployed API outputs were captured in `evidence/phase3/terraform-output.json`
-- local Streamlit was validated against the deployed backend, with response evidence captured in `evidence/phase3/frontend-cloud.html`
+### Chat request flow
 
-## Evidence Index
-- `evidence/phase3/terraform-output.json` - Terraform deployment outputs
-- `evidence/phase3/health.json` - deployed health endpoint response
-- `evidence/phase3/knowledge-success.json` - in-context grounded QA response
-- `evidence/phase3/knowledge-fallback.json` - out-of-context conservative fallback
-- `evidence/phase3/order-success.json` - verified order status response
-- `evidence/phase3/dynamodb-query.json` - DynamoDB session and message persistence proof
-- `evidence/phase3/cloudwatch-snippet.txt` - Lambda execution log evidence
-- `evidence/phase3/frontend-cloud.html` - local Streamlit served against cloud backend
+1. A client sends `session_id` and `message` to `POST /chat`.
+2. The backend loads the session state and appends the user message.
+3. The orchestrator classifies the message as either a knowledge question or an order-status request.
+4. If it is a knowledge request, the backend runs retrieval, reranking, grounded answer generation, and source shaping.
+5. If it is an order request, the backend runs the verification workflow and only returns order information after the required fields are collected.
+6. The final assistant response and any retrieval references are written back to memory.
 
-## Verification Summary
-- `/health` returns `{"status":"ok"}` on the deployed backend
-- knowledge success behavior was verified with grounded document evidence
-- fallback behavior was verified with an out-of-context prompt that did not hallucinate
-- order verification was verified end-to-end with `DD-MM-YYYY` DOB input
-- DynamoDB session and message writes were verified on the deployed table
-- CloudWatch Lambda execution logs were captured after live verification
+### Knowledge path
 
-## Infrastructure Layout
-- `AWS Lambda` runs the FastAPI backend through `Mangum`
-- `API Gateway HTTP API` exposes exactly `GET /health` and `POST /chat`
-- `DynamoDB` uses a single-table design with `pk`, `sk`, and `ttl`
-- `S3` can be either created by Terraform or reused as an existing docs bucket
-- `CloudWatch log group` is managed explicitly by Terraform with `14` day retention
+The knowledge path is centered on `app/backend/knowledge_base.py` and `app/backend/search_client.py`.
 
-## Terraform Inputs Vs Lambda Runtime Environment
-Terraform variables are the infrastructure inputs. Lambda environment variables are the runtime values injected by Terraform.
+1. Retrieve candidate chunks from OpenSearch using lexical and embedding-based search.
+2. Rerank the candidates according to query intent and SEC-style structure.
+3. Limit the final chunk set to the most relevant evidence for the question.
+4. Generate an answer only from the provided context.
+5. Build a short, deduplicated source list for the response.
 
-Examples:
-- `TF_VAR_llm_api_key` -> Lambda env `LLM_API_KEY`
-- `TF_VAR_opensearch_collection_name` -> Terraform-managed AOSS collection -> Lambda env `OPENSEARCH_COLLECTION_ENDPOINT`
-- `TF_VAR_docs_bucket_name` -> Lambda env `DOCS_S3_BUCKET`
+### Order workflow path
 
-## Deployment Defaults
-- Lambda runtime: `python3.12`
-- Lambda memory: `512 MB`
-- Lambda timeout: `30 seconds`
-- Lambda log retention: `14 days`
-- Packaging script: `scripts/package_lambda.py`
-- Packaging format: `artifacts/backend-lambda.zip`
+The order workflow is centered on `app/backend/order_workflow.py`.
+
+1. Detect that the message is about order status.
+2. Collect verification fields over multiple turns.
+3. Validate the provided identity details.
+4. Look up order information from the mock data source.
+5. Return a verified order response and persist the conversation state.
+
+## RAG Pipeline
+
+### Corpus
+
+The current demonstration corpus is intentionally narrow. The main indexed filing is:
+
+- `docs/company/Company-10k-18pages.pdf`
+
+The retrieval pipeline is tuned for this SEC-style 10-K family rather than generic PDF ingestion.
+
+### Indexing
+
+The indexing entrypoint is:
+
+- `scripts/index_sample_docs.py`
+
+This script performs SEC-aware preprocessing and chunk creation. Important behaviors include:
+
+- segmenting the filing by `PART` and `Item`
+- removing table-of-contents style noise
+- extracting structured financial rows for `Item 6`
+- building chunk metadata such as `item`, `subsection`, `subsubsection`, `content_type`, `metric`, `year`, and entity fields
+- replacing older chunks for the same `doc_id` during reindexing to avoid duplicates
+
+### Chunk types
+
+The parser produces several chunk styles to support different question types:
+
+- `narrative`: longer explanatory text sections
+- `fact`: shorter grounded factual statements
+- `table_row`: row-level numeric data for table QA
+- `table_block`: grouped table context for broader financial questions
+- `profile_row`: structured executive/officer rows
+- `profile_bio`: longer executive biography text
+
+### Retrieval
+
+Retrieval is implemented in `app/backend/search_client.py` and currently uses a hybrid strategy:
+
+- lexical search over fields like `section`, `item`, `subsection`, `content`, `metric`, and `entity_name`
+- embedding-based retrieval against OpenSearch vector fields
+- intent-aware query expansion for question families such as:
+  - business overview
+  - facilities and properties
+  - legal proceedings
+  - executive lookup
+  - numeric financial queries
+  - exact risk heading lookup
+
+### Answer grounding
+
+Answer generation is implemented in `app/backend/knowledge_base.py`.
+
+The backend does not treat all knowledge questions the same way. It applies intent-aware logic before generation, including:
+
+- direct numeric answers for exact table-row matches
+- stronger conservatism when the corpus only provides a cross-reference instead of a real explanation
+- fallback behavior when the expected filing section is not actually present in the retrieved evidence
+- source trimming and deduplication so the final source list stays short and relevant
+
+This is important for the current corpus because some filing sections are only partially represented in the 18-page PDF.
+
+## Architecture
+
+### Application stack
+
+- Frontend: `Streamlit`
+- Backend API: `FastAPI`
+- Backend adapter in cloud: `Mangum` on `AWS Lambda`
+- API entry: `API Gateway HTTP API`
+- Retrieval store: `OpenSearch Serverless`
+- Generation: `OpenAI-compatible API`
+- Memory: `DynamoDB`
+- Infrastructure: `Terraform`
+
+### Deployed architecture note
+
+The repository originally targeted a Bedrock Knowledge Bases path, but the practical deployed path uses OpenSearch retrieval plus OpenAI-compatible generation. The README reflects the currently working implementation rather than the original target design.
+
+## Repository Layout
+
+```text
+app/
+  backend/
+    classifier.py         Intent classification
+    handler.py            Lambda entrypoint
+    knowledge_base.py     Grounded answer generation and source shaping
+    main.py               FastAPI application
+    memory_store.py       Session persistence abstraction
+    orchestrator.py       Main request routing logic
+    order_workflow.py     Verification-driven order flow
+    search_client.py      OpenSearch retrieval and reranking
+  frontend/
+    streamlit_app.py      Streamlit user interface
+docs/                     Source documents and supporting docs
+infra/
+  terraform/              Cloud infrastructure definitions
+scripts/
+  index_sample_docs.py    Indexing pipeline for sample docs
+  package_lambda.py       Lambda artifact packaging
+tests/                    Unit and integration-oriented tests
+evidence/                 Deployment and verification artifacts
+```
+
+## Quickstart
+
+### 1. Create and activate a virtual environment
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+```
+
+### 2. Install dependencies
+
+```powershell
+pip install -r requirements.txt
+```
+
+If you only need the Streamlit frontend dependencies separately, use:
+
+```powershell
+pip install -r requirements-frontend.txt
+```
+
+### 3. Configure environment variables
+
+Copy `.env.example` to `.env` and set the values needed for your environment.
+
+Minimum settings for the current retrieval path:
+
+```env
+AWS_REGION=us-east-1
+LLM_PROVIDER=openai_compatible
+LLM_API_KEY=<external-llm-api-key>
+LLM_BASE_URL=https://r2lj67q.9router.com/v1
+LLM_MODEL=cx/gpt-5.4
+LLM_TIMEOUT_SECONDS=30
+OPENSEARCH_COLLECTION_ENDPOINT=<aoss-endpoint>
+OPENSEARCH_INDEX_NAME=policy-faq-chunks
+DOCS_S3_BUCKET=<docs-bucket>
+DOCS_S3_PREFIX=
+```
+
+`DOCS_S3_PREFIX` is optional. Leave it empty when documents live at the bucket root.
+
+### 4. Run the backend
+
+```powershell
+uvicorn app.backend.main:app --reload
+```
+
+The main API endpoints are:
+
+- `GET /health`
+- `POST /chat`
+- `POST /chat/stream`
+
+### 5. Run the frontend
+
+```powershell
+streamlit run app/frontend/streamlit_app.py
+```
+
+### 6. Run the tests
+
+```powershell
+pytest
+```
+
+### 7. Index the sample document corpus
+
+```powershell
+.venv\Scripts\python.exe scripts/index_sample_docs.py
+```
+
+If your local indexing flow depends on a named AWS profile, set it before running the script.
+
+Example:
+
+```powershell
+$env:AWS_PROFILE='minh-duykhanh'
+.venv\Scripts\python.exe scripts/index_sample_docs.py
+```
+
+## Common Development Workflows
+
+### Debug retrieval and answer generation
+
+Use:
+
+```powershell
+.venv\Scripts\python.exe scripts/debug_bedrock_response.py
+```
+
+Despite the file name, this script now reflects the current retrieval and answer path. It prints:
+
+- detected intent
+- retrieved chunks
+- provisional sources
+- prompt messages
+- direct answer from chunks
+- final `answer_question()` output
+
+You can override the debug question with:
+
+```powershell
+$env:DEBUG_QUESTION='Were there any legal proceedings?'
+.venv\Scripts\python.exe scripts/debug_bedrock_response.py
+```
+
+### Run the benchmark set used during retrieval tuning
+
+Use:
+
+```powershell
+$env:AWS_PROFILE='minh-duykhanh'
+.venv\Scripts\python.exe scripts/run_round3_benchmark.py
+```
+
+This writes a capture file to:
+
+- `artifacts/round3_benchmark.json`
 
 ## API Contract
 
 ### Request
+
 ```json
 {
   "session_id": "string",
@@ -127,6 +295,7 @@ Examples:
 ```
 
 ### Response
+
 ```json
 {
   "answer": "string",
@@ -147,270 +316,28 @@ Examples:
 }
 ```
 
-## How To Run Locally
+## Deployment Overview
 
-### 1. Create and activate a virtual environment
-```powershell
-python -m venv .venv
-.venv\Scripts\activate
-```
+The backend is packaged as a Lambda artifact and deployed with Terraform. The deploy stack manages resources such as:
 
-### 2. Install dependencies
-```powershell
-pip install -r requirements.txt
-```
+- Lambda
+- API Gateway
+- DynamoDB
+- OpenSearch Serverless
+- S3 and IAM resources needed by the deployed path
 
-### 3. Configure environment variables
-Copy `.env.example` to `.env` and adjust values if needed.
+Use `docs/deployment.md` for the packaging, Terraform apply flow, post-deploy verification steps, reindexing, and troubleshooting notes.
 
-For the AWS retrieval path, configure at least:
+## Current Limitations
 
-```env
-AWS_REGION=us-east-1
-LLM_PROVIDER=openai_compatible
-LLM_API_KEY=<external-llm-api-key>
-LLM_BASE_URL=https://r2lj67q.9router.com/v1
-LLM_MODEL=cx/gpt-5.4
-LLM_TIMEOUT_SECONDS=30
-OPENSEARCH_COLLECTION_ENDPOINT=<aoss-endpoint>
-OPENSEARCH_INDEX_NAME=policy-faq-chunks
-DOCS_S3_BUCKET=<docs-bucket>
-DOCS_S3_PREFIX=
-```
+- The main retrieval tuning is intentionally centered on a single SEC-style 10-K corpus.
+- The parser is not a generic solution for arbitrary PDFs.
+- The deployed path currently uses OpenSearch plus an OpenAI-compatible generation endpoint rather than Bedrock Knowledge Bases.
+- The project demonstrates a credible cloud baseline, but it is not fully production hardened.
 
-`DOCS_S3_PREFIX` is optional. Leave it empty or unset when the source document lives at the bucket root. Set it only when the document key is stored under a prefix such as `filings/`.
+## Additional Notes
 
-### 4. Run the backend
-```powershell
-uvicorn app.backend.main:app --reload
-```
-
-### 5. Run the frontend
-```powershell
-streamlit run app/frontend/streamlit_app.py
-```
-
-### 6. Run tests
-```powershell
-pytest
-```
-
-### 7. Index sample docs into OpenSearch
-```powershell
-.venv\Scripts\python.exe scripts/index_sample_docs.py
-```
-
-## Frontend Deployment with Dokploy
-Use this path when the backend is already deployed and you want to publish the Streamlit UI at `rag.ngxtm.site` from your VPS.
-
-### 1. Build from the frontend Dockerfile
-Use `Dockerfile.frontend` as the Dokploy build target.
-
-### 2. Configure the frontend environment
-Set the Dokploy environment variable:
-
-```env
-BACKEND_BASE_URL=<deployed-backend-url>
-```
-
-### 3. Use the Streamlit start command
-The container starts Streamlit automatically with:
-
-```bash
-streamlit run app/frontend/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
-```
-
-If you are not using the Dockerfile, you can still install frontend-only dependencies manually with:
-
-```powershell
-pip install -r requirements-frontend.txt
-```
-
-### 4. Map the Dokploy app to `rag.ngxtm.site`
-- point the domain or subdomain to the VPS
-- keep the app port and Dokploy domain mapping aligned on `8501`
-- enable TLS in Dokploy
-
-### 5. Troubleshoot reverse proxy and WebSocket issues first
-Streamlit depends on WebSocket support behind the reverse proxy. If the page loads partially, hangs, or behaves differently remotely than it does locally:
-- check Dokploy domain and port mapping first
-- inspect reverse proxy handling for WebSocket traffic
-- try this start command to rule out WebSocket compression issues:
-
-```bash
-streamlit run app/frontend/streamlit_app.py --server.port 8501 --server.address 0.0.0.0 --server.enableWebsocketCompression=false
-```
-
-Browser CORS is usually not the issue here because the Streamlit app calls the backend through server-side `httpx`.
-
-## Deployment Steps
-### 1. Package the Lambda artifact
-```powershell
-python scripts/package_lambda.py
-```
-
-### 2. Prepare Terraform variables
-Copy `infra/terraform/terraform.tfvars.example` to `infra/terraform/terraform.tfvars` and adjust the values.
-
-Do not commit a real `llm_api_key` into Terraform files. Provide it through a local non-committed tfvars file or shell input such as `TF_VAR_llm_api_key`.
-
-Terraform now creates the OpenSearch Serverless collection directly. Set `opensearch_collection_name` instead of pasting a pre-created endpoint.
-
-If you run `scripts/index_sample_docs.py` from your local machine, add your local IAM user or IAM role ARN to `opensearch_additional_principal_arns` so the AOSS data access policy also trusts that principal.
-
-If you use an IAM user for local indexing, also add that user name to `opensearch_local_iam_user_names` so Terraform grants the required identity-based `aoss:APIAccessAll` permission in addition to the AOSS data access policy.
-
-### 3. Initialize and validate Terraform
-```powershell
-terraform -chdir=infra/terraform init
-terraform -chdir=infra/terraform fmt -check
-terraform -chdir=infra/terraform validate
-```
-
-### 4. Plan and apply infrastructure
-```powershell
-terraform -chdir=infra/terraform plan
-terraform -chdir=infra/terraform apply
-```
-
-### 5. Capture deployment outputs
-```powershell
-terraform -chdir=infra/terraform output -json
-```
-
-The deployed `api_url` is captured in `evidence/phase3/terraform-output.json` and can be exported to the frontend through `BACKEND_BASE_URL`.
-
-The same Terraform outputs also include the OpenSearch collection endpoint and dashboard endpoint used by the Lambda runtime and the indexing script.
-
-## Verification Steps
-Order verification DOB input must use `DD-MM-YYYY`.
-
-### 1. Verify health endpoint
-```powershell
-curl <API_URL>/health
-```
-
-Expected response:
-```json
-{"status":"ok"}
-```
-
-### 2. Verify knowledge retrieval
-```powershell
-curl -X POST <API_URL>/chat ^
-  -H "Content-Type: application/json" ^
-  -d "{\"session_id\":\"phase3-kb-001\",\"message\":\"What is the return policy?\"}"
-```
-
-Fallback is considered correct if the API returns a valid response and the answer clearly indicates that there is not enough grounded context instead of inventing unsupported information.
-
-### 3. Verify order workflow
-```powershell
-curl -X POST <API_URL>/chat ^
-  -H "Content-Type: application/json" ^
-  -d "{\"session_id\":\"phase3-order-001\",\"message\":\"Where is my order?\"}"
-```
-
-```powershell
-curl -X POST <API_URL>/chat ^
-  -H "Content-Type: application/json" ^
-  -d "{\"session_id\":\"phase3-order-001\",\"message\":\"My name is John Smith\"}"
-```
-
-```powershell
-curl -X POST <API_URL>/chat ^
-  -H "Content-Type: application/json" ^
-  -d "{\"session_id\":\"phase3-order-001\",\"message\":\"My date of birth is 15-01-1990\"}"
-```
-
-```powershell
-curl -X POST <API_URL>/chat ^
-  -H "Content-Type: application/json" ^
-  -d "{\"session_id\":\"phase3-order-001\",\"message\":\"Last 4 of my SSN is 1234\"}"
-```
-
-### 4. Verify DynamoDB persistence
-- Confirm the session item exists with `pk=session_id` and `sk=SESSION`
-- Confirm message items exist with `pk=session_id` and `sk=MESSAGE#...`
-- Confirm `ttl` is written on both session and message records
-
-### 5. Verify OpenSearch connectivity
-If knowledge retrieval fails after deployment, verify all three of the following:
-- the Lambda role permissions allow signed AOSS requests
-- the Terraform-managed AOSS data access policy trusts the Lambda role principal
-- the deployed `opensearch_collection_endpoint` output matches the collection created by Terraform
-
-### 6. Index sample docs into the Terraform-managed collection
-After `terraform apply`, run:
-
-```powershell
-.venv\Scripts\python.exe scripts/index_sample_docs.py
-```
-
-The script now creates the OpenSearch index with an explicit mapping when it is missing, then refreshes and indexes the sample documents.
-
-## Demo Flow
-1. Show the deployment result and evidence index
-2. Verify the deployed `/health` response
-3. Show a grounded knowledge success response
-4. Show a conservative fallback response for an out-of-context question
-5. Walk through the order verification workflow with `DD-MM-YYYY` DOB input
-6. Show DynamoDB persistence and CloudWatch log evidence
-
-## Interview Talking Points
-- why `Lambda + API Gateway + DynamoDB` was chosen for a fast, serverless deployment baseline
-- why the project uses a single-table DynamoDB memory model with `SESSION` and `MESSAGE` items
-- why the deployed fallback architecture was used instead of forcing Bedrock under quota and throttling pressure
-- why conservative fallback behavior matters for non-hallucinated customer support answers
-- what production hardening would be prioritized after assignment delivery
-
-## CI/CD Model
-- `CI`: runs `pytest`, `terraform fmt -check`, and `terraform validate`
-- `CD support`: packages the Lambda artifact and can run `terraform plan`
-- `Apply`: remains manual or gated to reduce accidental cloud changes during the assignment
-
-## Deferred Items
-- streaming responses
-- frontend cloud hosting
-- WAF
-- multi-env
-- Secrets Manager rotation
-- full monitoring/alarming
-- migration back to Bedrock target path
-
-## Current Repo Layout
-```text
-app/
-  backend/
-    classifier.py
-    handler.py
-    knowledge_base.py
-    llm_client.py
-    main.py
-    memory_store.py
-    models.py
-    orchestrator.py
-    order_workflow.py
-    search_client.py
-    validators.py
-  frontend/
-    streamlit_app.py
-data/
-  mock/
-    orders.json
-  sample_docs/
-docs/
-  ai/
-  architecture/
-infra/
-scripts/
-  index_sample_docs.py
-tests/
-  test_knowledge_base.py
-  test_llm_client.py
-  test_orchestrator.py
-  test_order_workflow.py
-  test_search_retrieval.py
-  test_smoke.py
-  test_validators.py
-```
+- Use `docs/deployment.md` for the deployment, verification, and reindexing runbook.
+- Deployment and verification artifacts are stored under `evidence/`.
+- Infrastructure definitions live under `infra/terraform/`.
+- The backend is the primary system of record for the application flow; the Streamlit app is a thin UI over the API contract.
