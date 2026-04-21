@@ -35,6 +35,16 @@ def _render_backend_fallback(payload: dict[str, str]) -> str:
     return _render_blocking_response(fallback_response.json())
 
 
+def _read_stream_error_detail(response: httpx.Response) -> str:
+    try:
+        payload = json.loads(response.read().decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return ""
+    if isinstance(payload, dict):
+        return str(payload.get("detail", ""))
+    return ""
+
+
 def _get_session_id() -> str:
     if "chat_session_id" not in st.session_state:
         st.session_state.chat_session_id = str(uuid.uuid4())
@@ -91,9 +101,10 @@ def _stream_knowledge_chunks(payload: dict[str, str]):
     try:
         with httpx.stream("POST", f"{BACKEND_BASE_URL}/chat/stream", json=payload, timeout=_backend_stream_timeout()) as response:
             if response.status_code == 400:
-                detail = response.json().get("detail", "")
+                detail = _read_stream_error_detail(response)
                 if detail == STREAMING_ORDER_FALLBACK_MESSAGE:
                     raise RuntimeError(_render_backend_fallback(payload))
+                raise RuntimeError(detail or "Backend rejected the streaming request.")
             if response.status_code >= 500:
                 raise RuntimeError(_render_backend_fallback(payload))
             response.raise_for_status()
