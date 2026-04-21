@@ -158,8 +158,8 @@ if prompt:
         "message": prompt,
     }
 
-    try:
-        with st.chat_message("assistant"):
+    with st.chat_message("assistant"):
+        try:
             st.session_state["last_stream_sources"] = []
             streamed_answer = st.write_stream(_stream_knowledge_chunks(payload))
             source_lines = st.session_state.pop("last_stream_sources", [])
@@ -168,13 +168,12 @@ if prompt:
                 assistant_message = "\n\n".join([streamed_answer, *source_lines])
             else:
                 assistant_message = str(streamed_answer)
-    except (httpx.HTTPError, RuntimeError) as exc:
-        error_text = str(exc)
-        if error_text and not error_text.startswith("Backend request failed:") and not error_text.startswith("Knowledge"):
-            assistant_message = error_text
-        else:
-            assistant_message = f"Backend request failed: {exc}"
-        with st.chat_message("assistant"):
+        except (httpx.HTTPError, RuntimeError) as exc:
+            error_text = str(exc)
+            if error_text and not error_text.startswith("Backend request failed:") and not error_text.startswith("Knowledge"):
+                assistant_message = error_text
+            else:
+                assistant_message = f"Backend request failed: {exc}"
             st.markdown(assistant_message)
 
     messages.append({"role": "assistant", "content": assistant_message})
