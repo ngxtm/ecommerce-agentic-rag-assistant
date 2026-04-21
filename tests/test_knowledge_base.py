@@ -333,6 +333,33 @@ def test_retrieve_relevant_chunks_prefers_item3_for_legal_query(mock_search_chun
 
 
 @patch("app.backend.knowledge_base.search_chunks")
+def test_retrieve_relevant_chunks_prefers_item5_for_stock_query(mock_search_chunks: Mock) -> None:
+    item5 = RetrievedChunk(
+        chunk_id="item5-stock",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 5. Market for the Registrant's Common Stock, Related Shareholder Matters, and Issuer Purchases of Equity Securities",
+        content="Our common stock is traded on the Nasdaq Global Select Market under the symbol AMZN.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=4.6,
+        lexical_score=4.6,
+        vector_score=0.0,
+        item="Item 5. Market for the Registrant's Common Stock, Related Shareholder Matters, and Issuer Purchases of Equity Securities",
+        subsection="Market Information",
+        content_type="fact",
+    )
+    noisy_risk = _item1a_chunk(score=5.0)
+    mock_search_chunks.return_value = [noisy_risk, item5]
+
+    chunks = retrieve_relevant_chunks(
+        "Market for the Registrant's Common Stock, Related Shareholder Matters, and Issuer Purchases of Equity Securities"
+    )
+
+    assert chunks[0].chunk_id == "item5-stock"
+
+
+@patch("app.backend.knowledge_base.search_chunks")
 def test_retrieve_relevant_chunks_prefers_item7a_for_market_risk_query(mock_search_chunks: Mock) -> None:
     noisy = RetrievedChunk(
         chunk_id="noise-risk",
@@ -556,6 +583,7 @@ def test_generate_grounded_answer_synthesizes_summary_when_narrative_chunks_are_
     assert "supported themes" in answer
     assert "Government Regulation Is Evolving" in answer
     assert "Intellectual Property Rights and Being Accused of Infringing" in answer
+    mock_generate_chat_completion.assert_called_once()
 
 
 @patch("app.backend.knowledge_base.retrieve_relevant_chunks")

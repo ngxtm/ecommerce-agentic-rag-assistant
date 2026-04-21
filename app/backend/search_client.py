@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 import os
 from dataclasses import dataclass
 
@@ -43,8 +44,91 @@ NUMERIC_QUERY_HINTS = (
 ITEM_1_HINTS = ("business", "focus on", "customers", "amazon web services", "consumers", "sellers")
 ITEM_2_HINTS = ("properties", "facilities", "operate", "headquarters", "offices", "fulfillment centers", "data centers")
 ITEM_3_HINTS = ("legal proceedings", "litigation", "lawsuit", "claims")
+ITEM_5_HINTS = (
+    "item 5",
+    "market for the registrant's common stock",
+    "market for the registrant’s common stock",
+    "common stock",
+    "shareholder matters",
+    "shareholders of record",
+    "issuer purchases of equity securities",
+    "market information",
+    "holders",
+    "stock symbol",
+    "nasdaq",
+    "amzn",
+)
 ITEM_7A_HINTS = ("market risk", "item 7a", "interest rate risk", "foreign exchange risk", "foreign currency risk", "equity investment risk")
 ITEM_8_HINTS = ("item 8", "financial statements", "supplementary data", "balance sheets", "cash flows", "stockholders", "statements of operations")
+EXPLICIT_ITEM_ROUTING_RULES = (
+    {
+        "item": "Item 1. Business",
+        "hints": ("item 1", "item 1 business"),
+        "expansion": "Item 1 Business General Consumers Sellers developers enterprises customer-centric focus selection price convenience",
+        "boosts": (
+            {"term": {"item.keyword": {"value": "Item 1. Business", "boost": 25}}},
+            {"term": {"subsection.keyword": {"value": "General", "boost": 12}}},
+            {"term": {"subsection.keyword": {"value": "Consumers", "boost": 16}}},
+        ),
+        "intent": "narrative_explainer",
+    },
+    {
+        "item": "Item 2. Properties",
+        "hints": ("item 2", "item 2 properties"),
+        "expansion": "Item 2 Properties facilities headquarters offices fulfillment centers",
+        "boosts": (
+            {"term": {"item.keyword": {"value": "Item 2. Properties", "boost": 24}}},
+        ),
+        "intent": "narrative_explainer",
+    },
+    {
+        "item": "Item 3. Legal Proceedings",
+        "hints": ("item 3", "item 3 legal proceedings"),
+        "expansion": "Item 3 Legal Proceedings legal proceedings claims litigation contingencies",
+        "boosts": (
+            {"term": {"item.keyword": {"value": "Item 3. Legal Proceedings", "boost": 28}}},
+        ),
+        "intent": "narrative_explainer",
+    },
+    {
+        "item": "Item 5. Market for the Registrant's Common Stock, Related Shareholder Matters, and Issuer Purchases of Equity Securities",
+        "hints": (
+            "item 5",
+            "item 5 market for the registrant's common stock",
+            "item 5 market for the registrant’s common stock",
+            "market for the registrant's common stock",
+            "market for the registrant’s common stock",
+            "issuer purchases of equity securities",
+            "shareholder matters",
+        ),
+        "expansion": "Item 5 Market for the Registrant's Common Stock Related Shareholder Matters Issuer Purchases of Equity Securities market information holders Nasdaq AMZN",
+        "boosts": (
+            {
+                "term": {
+                    "item.keyword": {
+                        "value": "Item 5. Market for the Registrant's Common Stock, Related Shareholder Matters, and Issuer Purchases of Equity Securities",
+                        "boost": 28,
+                    }
+                }
+            },
+        ),
+        "intent": "narrative_explainer",
+    },
+    {
+        "item": "Item 7A. Quantitative and Qualitative Disclosures About Market Risk",
+        "hints": ("item 7a", "item 7a market risk", "quantitative and qualitative disclosures about market risk"),
+        "expansion": "Item 7A Quantitative and Qualitative Disclosures About Market Risk",
+        "boosts": (),
+        "intent": "narrative_explainer",
+    },
+    {
+        "item": "Item 8. Financial Statements and Supplementary Data",
+        "hints": ("item 8", "item 8 financial statements", "financial statements and supplementary data"),
+        "expansion": "Item 8 Financial Statements and Supplementary Data",
+        "boosts": (),
+        "intent": "narrative_explainer",
+    },
+)
 
 
 @dataclass
@@ -140,17 +224,34 @@ def _build_doc_filter() -> list[dict[str, object]]:
     ]
 
 
+def _normalize_question_text(question: str) -> str:
+    return re.sub(r"\s+", " ", question.casefold()).strip(" ?.\n\t")
+
+
+def _explicit_item_rule(question: str) -> dict[str, object] | None:
+    normalized = _normalize_question_text(question)
+    for rule in EXPLICIT_ITEM_ROUTING_RULES:
+        item_text = _normalize_question_text(str(rule["item"]))
+        hints = tuple(str(hint).casefold() for hint in rule["hints"])
+        if normalized == item_text or any(hint in normalized for hint in hints):
+            return rule
+    return None
+
+
 def _classify_query_intent(question: str) -> str:
     normalized = question.casefold()
+    explicit_item = _explicit_item_rule(question)
     if any(hint in normalized for hint in NUMERIC_QUERY_HINTS):
         return "numeric_table"
     if normalized.startswith("who is ") or normalized.startswith("who are "):
         return "entity_lookup"
     if any(hint in normalized for hint in EXECUTIVE_QUERY_HINTS):
         return "entity_lookup"
+    if explicit_item is not None:
+        return str(explicit_item["intent"])
     if any(hint in normalized for hint in RISK_HEADING_HINTS) or (len(question.split()) >= 8 and question[:1].isupper()):
         return "heading_lookup"
-    if any(hint in normalized for hint in ITEM_1_HINTS + ITEM_2_HINTS + ITEM_3_HINTS + ITEM_7A_HINTS + ITEM_8_HINTS):
+    if any(hint in normalized for hint in ITEM_1_HINTS + ITEM_2_HINTS + ITEM_3_HINTS + ITEM_5_HINTS + ITEM_7A_HINTS + ITEM_8_HINTS):
         return "narrative_explainer"
     if "management" in normalized or "results of operations" in normalized or "liquidity" in normalized:
         return "narrative_explainer"
@@ -159,18 +260,26 @@ def _classify_query_intent(question: str) -> str:
 
 def _expand_query(question: str, intent: str) -> str:
     normalized = question.casefold()
+    explicit_item = _explicit_item_rule(question)
     if intent == "entity_lookup":
         return f"{question} Information About Our Executive Officers Executive Officers and Directors Board of Directors leadership"
     if intent == "heading_lookup":
         return f"{question} Item 1A Risk Factors subsection heading"
     if intent == "numeric_table":
         return f"{question} Selected Consolidated Financial Data table"
+    if explicit_item is not None:
+        return f"{question} {explicit_item['expansion']}"
     if any(hint in normalized for hint in ITEM_1_HINTS):
         return f"{question} Item 1 Business General Consumers Sellers developers enterprises customer-centric focus selection price convenience"
     if any(hint in normalized for hint in ITEM_2_HINTS):
         return f"{question} Item 2 Properties facilities headquarters offices fulfillment centers"
     if any(hint in normalized for hint in ITEM_3_HINTS):
         return f"{question} Item 3 Legal Proceedings legal proceedings claims litigation contingencies"
+    if any(hint in normalized for hint in ITEM_5_HINTS):
+        return (
+            f"{question} Item 5 Market for the Registrant's Common Stock Related Shareholder Matters "
+            "Issuer Purchases of Equity Securities market information holders Nasdaq AMZN"
+        )
     if any(hint in normalized for hint in ITEM_7A_HINTS):
         return f"{question} Item 7A Quantitative and Qualitative Disclosures About Market Risk"
     if any(hint in normalized for hint in ITEM_8_HINTS):
@@ -223,6 +332,7 @@ def _build_lexical_query(question: str, top_k: int) -> dict[str, object]:
     intent = _classify_query_intent(question)
     expanded_question = _expand_query(question, intent)
     normalized = question.casefold()
+    explicit_item = _explicit_item_rule(question)
     should = [
         {
             "multi_match": {
@@ -242,13 +352,15 @@ def _build_lexical_query(question: str, top_k: int) -> dict[str, object]:
         },
     ]
     if intent == "narrative_explainer":
+        if explicit_item is not None:
+            should.extend(explicit_item["boosts"])
         if any(hint in normalized for hint in ITEM_1_HINTS) and not any(hint in normalized for hint in ITEM_2_HINTS):
             should.append({"term": {"item.keyword": {"value": "Item 1. Business", "boost": 25}}})
             should.append({"term": {"subsection.keyword": {"value": "General", "boost": 12}}})
             should.append({"term": {"subsection.keyword": {"value": "Consumers", "boost": 16}}})
-        if any(hint in normalized for hint in ITEM_3_HINTS):
+        if explicit_item is None and any(hint in normalized for hint in ITEM_3_HINTS):
             should.append({"term": {"item.keyword": {"value": "Item 3. Legal Proceedings", "boost": 28}}})
-        if any(hint in normalized for hint in ITEM_2_HINTS):
+        if explicit_item is None and any(hint in normalized for hint in ITEM_2_HINTS):
             should.append({"term": {"item.keyword": {"value": "Item 2. Properties", "boost": 24}}})
     return {
         "size": max(top_k * LEXICAL_CANDIDATE_MULTIPLIER, top_k),

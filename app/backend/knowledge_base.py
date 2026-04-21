@@ -69,8 +69,37 @@ RISK_QUERY_HINTS = {
 BUSINESS_QUERY_HINTS = {"business", "focus", "customers", "consumer", "sellers", "aws"}
 PROPERTIES_QUERY_HINTS = {"properties", "facilities", "headquarters", "offices", "fulfillment", "centers", "data"}
 LEGAL_QUERY_HINTS = {"legal", "proceedings", "litigation", "lawsuit", "claims"}
+ITEM5_QUERY_HINTS = {
+    "item",
+    "5",
+    "common",
+    "stock",
+    "shareholder",
+    "shareholders",
+    "holders",
+    "issuer",
+    "equity",
+    "securities",
+    "nasdaq",
+    "amzn",
+}
 MARKET_RISK_QUERY_HINTS = {"market", "risk", "7a", "interest", "foreign", "exchange", "currency"}
 ITEM8_QUERY_HINTS = {"financial", "statements", "supplementary", "balance", "cash", "flows", "stockholders"}
+ITEM_EXPECTATION_RULES = (
+    ("Item 1A. Risk Factors", lambda lower, keywords: "item 1a" in lower or (({"risk", "factors"} <= keywords or "risk factors" in lower) and "item 7a" not in lower)),
+    ("Item 1. Business", lambda lower, keywords: ("item 1" in lower or "item 1 business" in lower or (bool(keywords & BUSINESS_QUERY_HINTS) and not bool(keywords & PROPERTIES_QUERY_HINTS)))),
+    ("Item 2. Properties", lambda lower, keywords: ("item 2" in lower or bool(keywords & PROPERTIES_QUERY_HINTS))),
+    ("Item 3. Legal Proceedings", lambda lower, keywords: ("item 3" in lower or bool(keywords & LEGAL_QUERY_HINTS))),
+    (
+        "Item 5. Market for the Registrant's Common Stock, Related Shareholder Matters, and Issuer Purchases of Equity Securities",
+        lambda lower, keywords: "item 5" in lower or "market for the registrant's common stock" in lower or "market for the registrant’s common stock" in lower or "issuer purchases of equity securities" in lower or "shareholder matters" in lower,
+    ),
+    (
+        "Item 7A. Quantitative and Qualitative Disclosures About Market Risk",
+        lambda lower, keywords: "item 7a" in lower or "quantitative and qualitative disclosures about market risk" in lower or (bool(keywords & MARKET_RISK_QUERY_HINTS) and "item 1a" not in lower and "item 5" not in lower),
+    ),
+    ("Item 8. Financial Statements and Supplementary Data", lambda lower, keywords: bool(keywords & ITEM8_QUERY_HINTS)),
+)
 
 
 def _extract_question_keywords(question: str) -> set[str]:
@@ -157,19 +186,11 @@ def _expected_items(question: str) -> set[str]:
     keywords = _extract_question_keywords(question)
     question_lower = question.casefold()
     expected: set[str] = set()
-    if "item 1a" in question_lower or (({"risk", "factors"} <= keywords or "risk factors" in question_lower) and "item 7a" not in question_lower):
-        expected.add("Item 1A. Risk Factors")
-    if keywords & BUSINESS_QUERY_HINTS and not (keywords & PROPERTIES_QUERY_HINTS):
-        if "Item 1A. Risk Factors" not in expected:
-            expected.add("Item 1. Business")
-    if keywords & PROPERTIES_QUERY_HINTS:
-        expected.add("Item 2. Properties")
-    if keywords & LEGAL_QUERY_HINTS:
-        expected.add("Item 3. Legal Proceedings")
-    if "item 7a" in question_lower or (keywords & MARKET_RISK_QUERY_HINTS and "item 1a" not in question_lower):
-        expected.add("Item 7A. Quantitative and Qualitative Disclosures About Market Risk")
-    if keywords & ITEM8_QUERY_HINTS:
-        expected.add("Item 8. Financial Statements and Supplementary Data")
+    for item_name, matcher in ITEM_EXPECTATION_RULES:
+        if matcher(question_lower, keywords):
+            expected.add(item_name)
+    if "Item 1A. Risk Factors" in expected:
+        expected.discard("Item 1. Business")
     return expected
 
 

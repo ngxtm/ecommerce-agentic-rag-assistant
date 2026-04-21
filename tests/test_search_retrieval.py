@@ -53,6 +53,7 @@ def test_classify_query_intent_handles_numeric_entity_and_heading_queries() -> N
     assert _classify_query_intent("Who are the executive officers and directors?") == "entity_lookup"
     assert _classify_query_intent("The Loss of Key Senior Management Personnel Could Harm Our Business") == "heading_lookup"
     assert _classify_query_intent("What facilities did Amazon operate?") == "narrative_explainer"
+    assert _classify_query_intent("Market for the Registrant's Common Stock, Related Shareholder Matters, and Issuer Purchases of Equity Securities") == "narrative_explainer"
 
 
 def test_build_lexical_query_boosts_entity_fields_for_entity_lookup() -> None:
@@ -81,6 +82,20 @@ def test_build_lexical_query_adds_item1_boost_for_business_query() -> None:
     should_clauses = query["query"]["bool"]["should"]
 
     assert any(clause.get("term", {}).get("item.keyword", {}).get("value") == "Item 1. Business" for clause in should_clauses)
+
+
+def test_build_lexical_query_adds_item5_boost_for_stock_query() -> None:
+    query = _build_lexical_query(
+        "Market for the Registrant's Common Stock, Related Shareholder Matters, and Issuer Purchases of Equity Securities",
+        top_k=4,
+    )
+    should_clauses = query["query"]["bool"]["should"]
+
+    assert any(
+        clause.get("term", {}).get("item.keyword", {}).get("value")
+        == "Item 5. Market for the Registrant's Common Stock, Related Shareholder Matters, and Issuer Purchases of Equity Securities"
+        for clause in should_clauses
+    )
 
 
 def test_merge_candidates_keeps_exact_lexical_match_above_semantic_neighbor() -> None:
