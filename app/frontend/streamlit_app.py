@@ -12,7 +12,27 @@ STREAMING_ORDER_FALLBACK_MESSAGE = "Streaming is only available for knowledge qu
 
 
 load_dotenv()
-BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://localhost:8000")
+BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://localhost:8000").rstrip("/")
+BACKEND_REQUEST_TIMEOUT_SECONDS = float(os.getenv("BACKEND_REQUEST_TIMEOUT_SECONDS", "60"))
+BACKEND_STREAM_READ_TIMEOUT_SECONDS = float(os.getenv("BACKEND_STREAM_READ_TIMEOUT_SECONDS", "90"))
+
+
+def _backend_request_timeout() -> httpx.Timeout:
+    return httpx.Timeout(BACKEND_REQUEST_TIMEOUT_SECONDS)
+
+
+def _backend_stream_timeout() -> httpx.Timeout:
+    return httpx.Timeout(connect=10.0, read=BACKEND_STREAM_READ_TIMEOUT_SECONDS, write=30.0, pool=10.0)
+
+
+def _render_backend_fallback(payload: dict[str, str]) -> str:
+    fallback_response = httpx.post(
+        f"{BACKEND_BASE_URL}/chat",
+        json=payload,
+        timeout=_backend_request_timeout(),
+    )
+    fallback_response.raise_for_status()
+    return _render_blocking_response(fallback_response.json())
 
 
 def _get_session_id() -> str:
@@ -68,35 +88,38 @@ def _render_blocking_response(data: dict[str, object]) -> str:
 
 def _stream_knowledge_chunks(payload: dict[str, str]):
     final_payload: dict[str, object] | None = None
-    with httpx.stream("POST", f"{BACKEND_BASE_URL}/chat/stream", json=payload, timeout=30.0) as response:
-        if response.status_code == 400:
-            detail = response.json().get("detail", "")
-            if detail == STREAMING_ORDER_FALLBACK_MESSAGE:
-                fallback_response = httpx.post(f"{BACKEND_BASE_URL}/chat", json=payload, timeout=30.0)
-                fallback_response.raise_for_status()
-                raise RuntimeError(_render_blocking_response(fallback_response.json()))
-        response.raise_for_status()
-        current_event: str | None = None
-        for raw_line in response.iter_lines():
-            if raw_line is None:
-                continue
-            line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
-            if line.startswith("event:"):
-                current_event = line.split(":", 1)[1].strip()
-                continue
-            if not line.startswith("data:"):
-                continue
-            payload_json = json.loads(line.split(":", 1)[1].strip())
-            if payload_json.get("event_version") != EVENT_VERSION:
-                raise RuntimeError("Unsupported stream event version.")
-            if current_event == "delta":
-                delta = str(payload_json.get("delta", ""))
-                if delta:
-                    yield delta
-            elif current_event == "final":
-                final_payload = payload_json
-            elif current_event == "error":
-                raise RuntimeError(str(payload_json.get("message", "Knowledge answer streaming failed before completion.")))
+    try:
+        with httpx.stream("POST", f"{BACKEND_BASE_URL}/chat/stream", json=payload, timeout=_backend_stream_timeout()) as response:
+            if response.status_code == 400:
+                detail = response.json().get("detail", "")
+                if detail == STREAMING_ORDER_FALLBACK_MESSAGE:
+                    raise RuntimeError(_render_backend_fallback(payload))
+            if response.status_code >= 500:
+                raise RuntimeError(_render_backend_fallback(payload))
+            response.raise_for_status()
+            current_event: str | None = None
+            for raw_line in response.iter_lines():
+                if raw_line is None:
+                    continue
+                line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
+                if line.startswith("event:"):
+                    current_event = line.split(":", 1)[1].strip()
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                payload_json = json.loads(line.split(":", 1)[1].strip())
+                if payload_json.get("event_version") != EVENT_VERSION:
+                    raise RuntimeError("Unsupported stream event version.")
+                if current_event == "delta":
+                    delta = str(payload_json.get("delta", ""))
+                    if delta:
+                        yield delta
+                elif current_event == "final":
+                    final_payload = payload_json
+                elif current_event == "error":
+                    raise RuntimeError(str(payload_json.get("message", "Knowledge answer streaming failed before completion.")))
+    except (httpx.TimeoutException, httpx.HTTPError):
+        raise RuntimeError(_render_backend_fallback(payload))
     if final_payload is None:
         raise RuntimeError("Knowledge answer streaming ended without a final event.")
     st.session_state["last_stream_sources"] = _format_sources(final_payload.get("sources") or [])
