@@ -3,12 +3,12 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-BUILD_DIR = ROOT_DIR / "build" / "lambda"
-PACKAGE_DIR = BUILD_DIR / "package"
+BUILD_ROOT = ROOT_DIR / "build"
 ARTIFACTS_DIR = ROOT_DIR / "artifacts"
 ARTIFACT_STEM = "backend-lambda"
 LAMBDA_REQUIREMENTS = (
@@ -22,14 +22,13 @@ LAMBDA_REQUIREMENTS = (
 )
 
 
-def _reset_directory(path: Path) -> None:
-    if path.exists():
-        shutil.rmtree(path)
-    path.mkdir(parents=True, exist_ok=True)
+def _create_build_directory() -> Path:
+    BUILD_ROOT.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="lambda-build-", dir=BUILD_ROOT))
 
 
-def _install_dependencies() -> None:
-    requirements_path = BUILD_DIR / "lambda-requirements.txt"
+def _install_dependencies(build_dir: Path, package_dir: Path) -> None:
+    requirements_path = build_dir / "lambda-requirements.txt"
     requirements_path.write_text("\n".join(LAMBDA_REQUIREMENTS) + "\n", encoding="utf-8")
     subprocess.run(
         [
@@ -47,40 +46,41 @@ def _install_dependencies() -> None:
             "3.12",
             "--only-binary=:all:",
             "--target",
-            str(PACKAGE_DIR),
+            str(package_dir),
         ],
         check=True,
         cwd=ROOT_DIR,
     )
 
 
-def _copy_sources() -> None:
-    shutil.copytree(ROOT_DIR / "app", PACKAGE_DIR / "app", dirs_exist_ok=True)
-    shutil.copytree(ROOT_DIR / "data" / "mock", PACKAGE_DIR / "data" / "mock", dirs_exist_ok=True)
+def _copy_sources(package_dir: Path) -> None:
+    shutil.copytree(ROOT_DIR / "app", package_dir / "app", dirs_exist_ok=True)
+    shutil.copytree(ROOT_DIR / "data" / "mock", package_dir / "data" / "mock", dirs_exist_ok=True)
 
 
-def _create_archive() -> Path:
+def _create_archive(package_dir: Path) -> Path:
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     archive_path = ARTIFACTS_DIR / ARTIFACT_STEM
     if archive_path.with_suffix(".zip").exists():
         archive_path.with_suffix(".zip").unlink()
-    created_archive = shutil.make_archive(str(archive_path), "zip", root_dir=PACKAGE_DIR)
+    created_archive = shutil.make_archive(str(archive_path), "zip", root_dir=package_dir)
     return Path(created_archive)
 
 
 def main() -> int:
     print("Preparing Lambda build directory...")
-    _reset_directory(BUILD_DIR)
-    PACKAGE_DIR.mkdir(parents=True, exist_ok=True)
+    build_dir = _create_build_directory()
+    package_dir = build_dir / "package"
+    package_dir.mkdir(parents=True, exist_ok=True)
 
     print("Installing Python dependencies into artifact package...")
-    _install_dependencies()
+    _install_dependencies(build_dir, package_dir)
 
     print("Copying application source files...")
-    _copy_sources()
+    _copy_sources(package_dir)
 
     print("Creating deployment artifact zip...")
-    archive = _create_archive()
+    archive = _create_archive(package_dir)
     print(f"Created Lambda artifact: {archive}")
     return 0
 

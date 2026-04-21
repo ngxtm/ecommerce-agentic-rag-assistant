@@ -157,8 +157,11 @@ def _expected_items(question: str) -> set[str]:
     keywords = _extract_question_keywords(question)
     question_lower = question.casefold()
     expected: set[str] = set()
+    if "item 1a" in question_lower or (({"risk", "factors"} <= keywords or "risk factors" in question_lower) and "item 7a" not in question_lower):
+        expected.add("Item 1A. Risk Factors")
     if keywords & BUSINESS_QUERY_HINTS and not (keywords & PROPERTIES_QUERY_HINTS):
-        expected.add("Item 1. Business")
+        if "Item 1A. Risk Factors" not in expected:
+            expected.add("Item 1. Business")
     if keywords & PROPERTIES_QUERY_HINTS:
         expected.add("Item 2. Properties")
     if keywords & LEGAL_QUERY_HINTS:
@@ -433,6 +436,59 @@ def _grounded_narrative_answer(question: str, chunks: list[RetrievedChunk]) -> s
     return None
 
 
+def _clean_summary_text(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    cleaned = cleaned.lstrip("•- ")
+    return cleaned.rstrip(".;:")
+
+
+def _narrative_summary_candidates(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    return [chunk for chunk in chunks if chunk.content_type in {"narrative", "fact"} and not _is_cross_reference_only(chunk)]
+
+
+def _synthesize_grounded_narrative_summary(question: str, chunks: list[RetrievedChunk]) -> str | None:
+    intent = _classify_question_intent(question)
+    if intent != "narrative_explainer":
+        return None
+
+    candidates = _narrative_summary_candidates(chunks)
+    if len(candidates) < 2:
+        return None
+
+    expected_items = _expected_items(question)
+    if expected_items:
+        candidates = [chunk for chunk in candidates if chunk.item in expected_items]
+    if len(candidates) < 2:
+        return None
+
+    grouped: dict[str, RetrievedChunk] = {}
+    for chunk in candidates:
+        group_key = chunk.subsection or chunk.subsubsection or chunk.section or chunk.title
+        existing = grouped.get(group_key)
+        if existing is None or chunk.score > existing.score:
+            grouped[group_key] = chunk
+
+    selected = sorted(grouped.values(), key=lambda chunk: chunk.score, reverse=True)[:4]
+    if len(selected) < 2:
+        return None
+
+    leading_item = selected[0].item or selected[0].section or "the filing"
+    summary_lines: list[str] = []
+    for chunk in selected:
+        label = chunk.subsection or chunk.subsubsection or chunk.section or chunk.title
+        content = _clean_summary_text(chunk.content)
+        if not content:
+            continue
+        first_sentence = re.split(r"(?<=[.!?])\s+", content, maxsplit=1)[0]
+        snippet = first_sentence if len(first_sentence) <= 220 else first_sentence[:217].rstrip() + "..."
+        summary_lines.append(f"- {label}: {snippet}")
+
+    if len(summary_lines) < 2:
+        return None
+
+    return f"The available context in {leading_item} highlights these supported themes:\n" + "\n".join(summary_lines)
+
+
 def _build_messages(question: str, context: str) -> list[dict[str, str]]:
     system_prompt = (
         "You are a customer support knowledge assistant. Answer only from the provided context. "
@@ -484,6 +540,11 @@ def generate_grounded_answer(question: str, chunks: list[RetrievedChunk]) -> str
     if narrative_answer is not None:
         return narrative_answer
     answer = generate_chat_completion(_build_messages(question, _format_context(chunks)))
+    if answer and answer != CONSERVATIVE_FALLBACK:
+        return answer
+    synthesized_answer = _synthesize_grounded_narrative_summary(question, chunks)
+    if synthesized_answer is not None:
+        return synthesized_answer
     return answer or CONSERVATIVE_FALLBACK
 
 

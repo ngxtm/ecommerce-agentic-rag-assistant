@@ -69,12 +69,40 @@ variable "lambda_log_retention_days" {
 variable "enable_xray" {
   description = "Enable X-Ray tracing for the Lambda function."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "conversation_table_name" {
   description = "DynamoDB table name for session and message persistence."
   type        = string
+}
+
+variable "orders_table_name" {
+  description = "DynamoDB table name for verified order lookups."
+  type        = string
+}
+
+variable "order_tool_function_name" {
+  description = "Lambda function name for the order status tool."
+  type        = string
+}
+
+variable "order_tool_handler" {
+  description = "Lambda handler path for the order status tool."
+  type        = string
+  default     = "app.backend.order_tool_handler.handler"
+}
+
+variable "order_tool_timeout_seconds" {
+  description = "Order status tool Lambda timeout in seconds."
+  type        = number
+  default     = 15
+}
+
+variable "order_tool_memory_mb" {
+  description = "Order status tool Lambda memory size in MB."
+  type        = number
+  default     = 256
 }
 
 variable "memory_ttl_days" {
@@ -158,9 +186,14 @@ variable "llm_provider" {
 }
 
 variable "llm_api_key" {
-  description = "API key Terraform injects into the Lambda runtime as LLM_API_KEY."
+  description = "API key stored in AWS Secrets Manager for the deployed Lambda runtime."
   type        = string
   sensitive   = true
+}
+
+variable "llm_api_key_secret_name" {
+  description = "Secrets Manager secret name that stores the LLM API key as a plain string."
+  type        = string
 }
 
 variable "llm_base_url" {

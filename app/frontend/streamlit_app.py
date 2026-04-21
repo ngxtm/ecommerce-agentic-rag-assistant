@@ -66,8 +66,7 @@ def _render_blocking_response(data: dict[str, object]) -> str:
     return "\n\n".join(lines)
 
 
-def _stream_knowledge_response(payload: dict[str, str], placeholder) -> str:
-    answer_parts: list[str] = []
+def _stream_knowledge_chunks(payload: dict[str, str]):
     final_payload: dict[str, object] | None = None
     with httpx.stream("POST", f"{BACKEND_BASE_URL}/chat/stream", json=payload, timeout=30.0) as response:
         if response.status_code == 400:
@@ -75,7 +74,7 @@ def _stream_knowledge_response(payload: dict[str, str], placeholder) -> str:
             if detail == STREAMING_ORDER_FALLBACK_MESSAGE:
                 fallback_response = httpx.post(f"{BACKEND_BASE_URL}/chat", json=payload, timeout=30.0)
                 fallback_response.raise_for_status()
-                return _render_blocking_response(fallback_response.json())
+                raise RuntimeError(_render_blocking_response(fallback_response.json()))
         response.raise_for_status()
         current_event: str | None = None
         for raw_line in response.iter_lines():
@@ -93,17 +92,14 @@ def _stream_knowledge_response(payload: dict[str, str], placeholder) -> str:
             if current_event == "delta":
                 delta = str(payload_json.get("delta", ""))
                 if delta:
-                    answer_parts.append(delta)
-                    placeholder.markdown("".join(answer_parts))
+                    yield delta
             elif current_event == "final":
                 final_payload = payload_json
             elif current_event == "error":
                 raise RuntimeError(str(payload_json.get("message", "Knowledge answer streaming failed before completion.")))
     if final_payload is None:
         raise RuntimeError("Knowledge answer streaming ended without a final event.")
-    lines = [str(final_payload.get("full_answer", ""))]
-    lines.extend(_format_sources(final_payload.get("sources") or []))
-    return "\n\n".join(lines)
+    st.session_state["last_stream_sources"] = _format_sources(final_payload.get("sources") or [])
 
 
 st.set_page_config(page_title="Agentic Commerce Assistant", page_icon=":speech_balloon:")
@@ -130,11 +126,20 @@ if prompt:
 
     try:
         with st.chat_message("assistant"):
-            placeholder = st.empty()
-            assistant_message = _stream_knowledge_response(payload, placeholder)
-            placeholder.markdown(assistant_message)
+            st.session_state["last_stream_sources"] = []
+            streamed_answer = st.write_stream(_stream_knowledge_chunks(payload))
+            source_lines = st.session_state.pop("last_stream_sources", [])
+            if source_lines:
+                st.markdown("\n\n".join(source_lines))
+                assistant_message = "\n\n".join([streamed_answer, *source_lines])
+            else:
+                assistant_message = str(streamed_answer)
     except (httpx.HTTPError, RuntimeError) as exc:
-        assistant_message = f"Backend request failed: {exc}"
+        error_text = str(exc)
+        if error_text and not error_text.startswith("Backend request failed:") and not error_text.startswith("Knowledge"):
+            assistant_message = error_text
+        else:
+            assistant_message = f"Backend request failed: {exc}"
         with st.chat_message("assistant"):
             st.markdown(assistant_message)
 

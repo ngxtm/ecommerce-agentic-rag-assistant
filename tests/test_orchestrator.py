@@ -29,7 +29,14 @@ def test_orchestrator_routes_knowledge_questions(mock_answer_question) -> None:
     assert stored_state.recent_messages[-1].contains_pii is False
 
 
-def test_orchestrator_continues_order_flow_without_repeating_keywords() -> None:
+@patch("app.backend.order_workflow.lookup_verified_order")
+def test_orchestrator_continues_order_flow_without_repeating_keywords(mock_lookup_verified_order) -> None:
+    mock_lookup_verified_order.return_value = {
+        "order_id": "ORD-1001",
+        "shipment_status": "In Transit",
+        "carrier": "UPS",
+        "estimated_delivery": "2026-04-20",
+    }
     session_id = "order-session"
     first = handle_chat(ChatRequest(session_id=session_id, message="Where is my order?"))
     second = handle_chat(ChatRequest(session_id=session_id, message="John Doe"))
@@ -46,5 +53,5 @@ def test_orchestrator_continues_order_flow_without_repeating_keywords() -> None:
     assert stored_state.collected_fields.full_name == "John Doe"
     assert stored_state.collected_fields.date_of_birth == "1990-06-15"
     assert stored_state.collected_fields.ssn_last4 == "1234"
-    assert stored_state.recent_messages[-1].tool_name == "mock_order_lookup"
+    assert stored_state.recent_messages[-1].tool_name == "order_status_tool"
     assert stored_state.recent_messages[-1].tool_result_summary == "order_found"

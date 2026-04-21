@@ -25,13 +25,19 @@ resource "aws_apigatewayv2_route" "chat" {
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
 
+resource "aws_apigatewayv2_route" "chat_stream" {
+  api_id    = aws_apigatewayv2_api.http.id
+  route_key = "POST /chat/stream"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.http.id
   name        = var.api_stage_name
   auto_deploy = true
 
   default_route_settings {
-    detailed_metrics_enabled = false
+    detailed_metrics_enabled = true
     throttling_burst_limit   = 100
     throttling_rate_limit    = 50
   }

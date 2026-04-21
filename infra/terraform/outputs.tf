@@ -13,6 +13,21 @@ output "conversation_table_name" {
   value       = aws_dynamodb_table.conversation.name
 }
 
+output "orders_table_name" {
+  description = "DynamoDB table name for verified order lookups."
+  value       = aws_dynamodb_table.orders.name
+}
+
+output "order_tool_function_name" {
+  description = "Order tool Lambda function name."
+  value       = aws_lambda_function.order_tool.function_name
+}
+
+output "llm_api_key_secret_name" {
+  description = "Secrets Manager secret name used for the LLM API key."
+  value       = aws_secretsmanager_secret.llm_api_key.name
+}
+
 output "docs_bucket_name" {
   description = "S3 docs bucket name used by the deployed backend."
   value       = local.docs_bucket_name

@@ -51,7 +51,7 @@ def chat(request: ChatRequest) -> ChatResponse:
     request_id = str(uuid.uuid4())
     started_at = time.perf_counter()
 
-    response = handle_chat(request)
+    response = handle_chat(request, request_id=request_id)
 
     latency_ms = round((time.perf_counter() - started_at) * 1000, 2)
     logger.info(
@@ -71,13 +71,9 @@ def chat(request: ChatRequest) -> ChatResponse:
 
 @app.post("/chat/stream")
 def chat_stream(request: ChatRequest) -> StreamingResponse:
+    request_id = str(uuid.uuid4())
     try:
         ensure_streaming_allowed(request)
     except StreamingIntentError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return StreamingResponse(stream_chat(request), media_type="text/event-stream")
-
-
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return StreamingResponse(stream_chat(request, request_id=request_id), media_type="text/event-stream")

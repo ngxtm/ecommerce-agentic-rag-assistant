@@ -9,9 +9,11 @@ lambda_timeout_seconds    = 30
 lambda_memory_mb          = 512
 lambda_artifact_path      = "../../artifacts/backend-lambda.zip"
 lambda_log_retention_days = 14
-enable_xray               = false
+enable_xray               = true
+order_tool_function_name  = "agentic-commerce-order-tool-dev"
 
 conversation_table_name   = "agentic-commerce-conversation-dev"
+orders_table_name         = "agentic-commerce-orders-dev"
 memory_ttl_days           = 7
 
 api_name                  = "agentic-commerce-api-dev"
@@ -34,6 +36,7 @@ opensearch_index_name          = "policy-faq-chunks"
 
 llm_provider              = "openai_compatible"
 llm_api_key               = "set-via-secret-or-local-tfvars"
+llm_api_key_secret_name   = "agentic-commerce-llm-api-key-dev"
 llm_base_url              = "https://r2lj67q.9router.com/v1"
 llm_model                 = "cx/gpt-5.4"
 llm_timeout_seconds       = 30

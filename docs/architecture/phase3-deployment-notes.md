@@ -10,11 +10,12 @@ Phase 3 is a deployable, testable, interview-defensible AWS baseline for the ass
 - CloudWatch log group retention: `14 days`, managed explicitly in Terraform
 
 ## API Surface
-Phase 3 exposes only these public routes through API Gateway HTTP API:
+Phase 3 exposes these public routes through API Gateway HTTP API:
 - `GET /health`
 - `POST /chat`
+- `POST /chat/stream`
 
-This keeps the deployment contract minimal and easier to defend in review.
+Streaming remains limited to knowledge responses. Order-status requests continue to use the non-streaming path so the verification workflow stays deterministic.
 
 ## S3 Strategy
 The Terraform stack supports two document bucket modes:
@@ -33,6 +34,15 @@ Deployed fallback architecture:
 - Amazon OpenSearch Serverless retrieval
 - OpenAI-compatible grounded generation
 - Amazon S3
+- AWS Secrets Manager for LLM API key retrieval
+- Orders DynamoDB table behind a dedicated order-status Lambda tool
+
+## Runtime Hardening Additions
+- the backend Lambda reads the external LLM API key from AWS Secrets Manager at runtime and caches it in process memory
+- order lookup is externalized behind an `Order Status Tool Lambda` instead of reading local mock data from the deployment package
+- CloudWatch metric alarms are provisioned for backend errors, order-tool errors, Lambda duration, and API Gateway 5XXs
+- API Gateway detailed metrics are enabled
+- Lambda tracing is configured through the shared `enable_xray` toggle
 
 Reason for delta:
 - repeated Bedrock throttling and quota blockers during execution

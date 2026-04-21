@@ -66,6 +66,25 @@ def _item7a_chunk(score: float = 5.0) -> RetrievedChunk:
     )
 
 
+def _item1a_chunk(score: float = 5.0, subsection: str | None = None, content: str | None = None) -> RetrievedChunk:
+    return RetrievedChunk(
+        chunk_id="item1a-risk",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 1A. Risk Factors",
+        content=content
+        or "Government Regulation Is Evolving and Unfavorable Changes Could Harm Our Business\nWe are subject to general business regulations and laws.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=score,
+        lexical_score=score,
+        vector_score=0.0,
+        item="Item 1A. Risk Factors",
+        subsection=subsection or "Government Regulation Is Evolving and Unfavorable Changes Could Harm Our Business",
+        content_type="narrative",
+    )
+
+
 def _item8_chunk(score: float = 5.0) -> RetrievedChunk:
     return RetrievedChunk(
         chunk_id="item8-statements",
@@ -337,6 +356,27 @@ def test_retrieve_relevant_chunks_prefers_item7a_for_market_risk_query(mock_sear
     assert chunks[0].chunk_id == "item7a-risk"
 
 
+@patch("app.backend.knowledge_base.search_chunks")
+def test_retrieve_relevant_chunks_prefers_item1a_for_explicit_risk_factor_query(mock_search_chunks: Mock) -> None:
+    mock_search_chunks.return_value = [
+        _sample_chunk(),
+        _item1a_chunk(score=5.1),
+        _item1a_chunk(
+            score=4.9,
+            subsection="Intellectual Property Rights and Being Accused of Infringing",
+            content="Our digital content offerings depend in part on effective digital rights management technology.",
+        ),
+    ]
+
+    chunks = retrieve_relevant_chunks(
+        "Summarize the risk factors described in Item 1A of Amazon's filing in a structured way, focusing on the major themes and how they could affect the business."
+    )
+
+    assert chunks
+    assert all(chunk.item == "Item 1A. Risk Factors" for chunk in chunks)
+    assert chunks[0].section == "Item 1A. Risk Factors"
+
+
 def test_build_sources_deduplicates_by_semantic_key_for_profile_rows() -> None:
     first = _profile_row_chunk()
     duplicate = RetrievedChunk(**{**first.__dict__, "chunk_id": "exec-row-2", "score": 4.5})
@@ -495,6 +535,27 @@ def test_generate_grounded_answer_returns_fallback_when_generation_returns_empty
     answer = generate_grounded_answer("When is tracking available?", [_sample_chunk()])
 
     assert answer == CONSERVATIVE_FALLBACK
+
+
+@patch("app.backend.knowledge_base.generate_chat_completion")
+def test_generate_grounded_answer_synthesizes_summary_when_narrative_chunks_are_supported(mock_generate_chat_completion: Mock) -> None:
+    mock_generate_chat_completion.return_value = CONSERVATIVE_FALLBACK
+
+    answer = generate_grounded_answer(
+        "Summarize the risk factors described in Item 1A of Amazon's filing in a structured way.",
+        [
+            _item1a_chunk(score=5.0),
+            _item1a_chunk(
+                score=4.8,
+                subsection="Intellectual Property Rights and Being Accused of Infringing",
+                content="Our digital content offerings depend in part on effective digital rights management technology.",
+            ),
+        ],
+    )
+
+    assert "supported themes" in answer
+    assert "Government Regulation Is Evolving" in answer
+    assert "Intellectual Property Rights and Being Accused of Infringing" in answer
 
 
 @patch("app.backend.knowledge_base.retrieve_relevant_chunks")

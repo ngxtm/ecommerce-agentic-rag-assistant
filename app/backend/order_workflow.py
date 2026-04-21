@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
 import re
-from pathlib import Path
 
+from app.backend.order_lookup_client import OrderLookupError, build_verified_customer_ref, lookup_verified_order
 from app.backend.models import (
     ChatResponse,
     CollectedFields,
@@ -17,18 +16,12 @@ from app.backend.models import (
 from app.backend.validators import validate_date_of_birth, validate_full_name, validate_ssn_last4
 
 
-ORDERS_FILE = Path(__file__).resolve().parents[2] / "data" / "mock" / "orders.json"
 FIELD_ORDER = ("full_name", "date_of_birth", "ssn_last4")
 FIELD_PROMPTS = {
     "full_name": "Please share your full name.",
     "date_of_birth": "Please share your date of birth in DD-MM-YYYY format.",
     "ssn_last4": "Please share the last 4 digits of your SSN.",
 }
-
-
-def _load_orders() -> list[dict[str, str]]:
-    with ORDERS_FILE.open("r", encoding="utf-8") as file:
-        return json.load(file)
 
 
 def _extract_full_name(message: str) -> str | None:
@@ -70,17 +63,6 @@ def _update_verification_state(collected_fields: CollectedFields) -> Verificatio
         missing_fields=missing_fields,
         verified_fields=verified_fields,
     )
-
-
-def _match_order(collected_fields: CollectedFields) -> dict[str, str] | None:
-    for order in _load_orders():
-        if (
-            order["full_name"].casefold() == collected_fields.full_name.casefold()
-            and order["dob"] == collected_fields.date_of_birth
-            and order["ssn_last4"] == collected_fields.ssn_last4
-        ):
-            return order
-    return None
 
 
 def _build_missing_field_prompt(verification_state: VerificationState) -> str:
@@ -157,7 +139,32 @@ def handle_order_workflow(message: str, session_state: SessionState) -> tuple[Ch
         )
 
     updated_state.workflow_state = WorkflowState.ORDER_VERIFIED
-    order = _match_order(updated_state.collected_fields)
+    updated_state.verified_customer_ref = build_verified_customer_ref(
+        updated_state.collected_fields.full_name,
+        updated_state.collected_fields.date_of_birth,
+        updated_state.collected_fields.ssn_last4,
+    )
+    try:
+        order = lookup_verified_order(
+            updated_state.collected_fields.full_name,
+            updated_state.collected_fields.date_of_birth,
+            updated_state.collected_fields.ssn_last4,
+        )
+    except OrderLookupError:
+        updated_state.workflow_state = WorkflowState.ORDER_COMPLETED
+        answer = (
+            "I verified your details, but I could not complete the order lookup right now. "
+            "Please try again shortly."
+        )
+        return (
+            ChatResponse(
+                answer=answer,
+                intent=Intent.ORDER_STATUS,
+                verification_state=updated_state.verification_state,
+                next_action=NextAction.RESPOND,
+            ),
+            updated_state,
+        )
     updated_state.workflow_state = WorkflowState.ORDER_COMPLETED
 
     if order is None:

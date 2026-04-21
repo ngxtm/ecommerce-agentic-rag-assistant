@@ -7,9 +7,24 @@ from typing import Any
 
 import httpx
 
+from app.backend.config import get_llm_api_key_secret_name
+from app.backend.secrets import get_secret_string
+
 
 class LLMClientError(RuntimeError):
     pass
+
+
+def _get_api_key() -> str:
+    api_key = os.getenv("LLM_API_KEY")
+    if api_key:
+        return api_key
+
+    secret_name = get_llm_api_key_secret_name()
+    if secret_name:
+        return get_secret_string(secret_name)
+
+    raise ValueError("OpenAI-compatible LLM configuration is incomplete.")
 
 
 def _normalize_base_url(base_url: str) -> str:
@@ -37,11 +52,11 @@ def _extract_content(response_json: dict[str, Any]) -> str:
 
 
 def _request_openai_compatible(path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    api_key = os.getenv("LLM_API_KEY")
+    api_key = _get_api_key()
     base_url = os.getenv("LLM_BASE_URL")
     timeout_seconds = float(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
 
-    if not api_key or not base_url:
+    if not base_url:
         raise ValueError("OpenAI-compatible LLM configuration is incomplete.")
 
     headers = {
@@ -109,9 +124,9 @@ def _extract_stream_delta(payload: dict[str, Any]) -> str:
 def generate_chat_completion_stream(messages: list[dict[str, str]]) -> Iterator[str]:
     model = os.getenv("LLM_MODEL")
     base_url = os.getenv("LLM_BASE_URL")
-    api_key = os.getenv("LLM_API_KEY")
+    api_key = _get_api_key()
     timeout_seconds = float(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
-    if not model or not base_url or not api_key:
+    if not model or not base_url:
         raise ValueError("OpenAI-compatible LLM configuration is incomplete.")
 
     payload = {

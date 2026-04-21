@@ -23,3 +23,18 @@ def test_build_log_event_omits_none_values() -> None:
     assert event["session_id"] == "session-1"
     assert "intent" not in event
     assert "timestamp" in event
+
+
+def test_build_log_event_preserves_request_and_tool_fields() -> None:
+    event = build_log_event(
+        "order_workflow_succeeded",
+        request_id="req-123",
+        tool_name="order_status_tool",
+        tool_result_summary="order_found",
+        fallback_used=False,
+    )
+
+    assert event["request_id"] == "req-123"
+    assert event["tool_name"] == "order_status_tool"
+    assert event["tool_result_summary"] == "order_found"
+    assert event["fallback_used"] is False

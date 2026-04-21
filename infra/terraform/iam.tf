@@ -20,6 +20,13 @@ resource "aws_iam_role" "lambda" {
   tags = local.base_tags
 }
 
+resource "aws_iam_role" "order_tool" {
+  name               = "${var.order_tool_function_name}-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+
+  tags = local.base_tags
+}
+
 data "aws_iam_policy_document" "lambda_access" {
   statement {
     sid    = "CloudWatchLogs"
@@ -56,6 +63,24 @@ data "aws_iam_policy_document" "lambda_access" {
     ]
   }
 
+  statement {
+    sid    = "InvokeOrderTool"
+    effect = "Allow"
+    actions = [
+      "lambda:InvokeFunction",
+    ]
+    resources = [aws_lambda_function.order_tool.arn]
+  }
+
+  statement {
+    sid    = "ReadLLMApiKeySecret"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:GetSecretValue",
+    ]
+    resources = [aws_secretsmanager_secret.llm_api_key.arn]
+  }
+
   # AOSS auth can still fail if the OpenSearch Serverless data access policy
   # does not also trust this Lambda role principal.
   statement {
@@ -86,4 +111,44 @@ resource "aws_iam_role_policy" "lambda_access" {
   name   = "${var.lambda_function_name}-access"
   role   = aws_iam_role.lambda.id
   policy = data.aws_iam_policy_document.lambda_access.json
+}
+
+data "aws_iam_policy_document" "order_tool_access" {
+  statement {
+    sid    = "CloudWatchLogs"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
+    resources = ["${aws_cloudwatch_log_group.order_tool.arn}:*"]
+  }
+
+  statement {
+    sid    = "ReadOrdersTable"
+    effect = "Allow"
+    actions = [
+      "dynamodb:GetItem",
+    ]
+    resources = [aws_dynamodb_table.orders.arn]
+  }
+
+  dynamic "statement" {
+    for_each = var.enable_xray ? [1] : []
+    content {
+      sid    = "XRayWrite"
+      effect = "Allow"
+      actions = [
+        "xray:PutTraceSegments",
+        "xray:PutTelemetryRecords",
+      ]
+      resources = ["*"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "order_tool_access" {
+  name   = "${var.order_tool_function_name}-access"
+  role   = aws_iam_role.order_tool.id
+  policy = data.aws_iam_policy_document.order_tool_access.json
 }

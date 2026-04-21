@@ -67,12 +67,13 @@ def _persist_knowledge_response(session_id: str, answer: str, sources: list, ses
     )
 
 
-def _append_order_response_observability(request: ChatRequest, response: ChatResponse) -> None:
+def _append_order_response_observability(request: ChatRequest, response: ChatResponse, request_id: str | None = None) -> None:
     if response.intent is Intent.ORDER_STATUS and response.next_action is NextAction.ASK_USER:
         logger.info(
             json.dumps(
                 build_log_event(
                     "verification_failed",
+                    request_id=request_id,
                     session_id=request.session_id,
                     missing_fields=response.verification_state.missing_fields,
                     verification_status=response.verification_state.status.value,
@@ -81,7 +82,7 @@ def _append_order_response_observability(request: ChatRequest, response: ChatRes
         )
 
 
-def _append_assistant_message(request: ChatRequest, response: ChatResponse) -> None:
+def _append_assistant_message(request: ChatRequest, response: ChatResponse, request_id: str | None = None) -> None:
     assistant_tool_name = None
     assistant_tool_result_summary = None
     assistant_retrieval_refs: list[str] = []
@@ -89,15 +90,48 @@ def _append_assistant_message(request: ChatRequest, response: ChatResponse) -> N
     if response.intent is Intent.KNOWLEDGE_QA:
         assistant_retrieval_refs = _extract_source_ids(response.sources)
     elif _is_order_response_with_tool_summary(response):
-        assistant_tool_name = "mock_order_lookup"
+        assistant_tool_name = "order_status_tool"
         if "could not find a matching order" in response.answer:
             assistant_tool_result_summary = "order_not_found"
-            logger.info(json.dumps(build_log_event("order_workflow_not_found", session_id=request.session_id)))
+            logger.info(
+                json.dumps(
+                    build_log_event(
+                        "order_workflow_not_found",
+                        request_id=request_id,
+                        session_id=request.session_id,
+                        tool_name=assistant_tool_name,
+                        tool_result_summary=assistant_tool_result_summary,
+                    )
+                )
+            )
+        elif "I verified your details, but I could not complete the order lookup right now." in response.answer:
+            assistant_tool_result_summary = "lookup_failed"
+            logger.info(
+                json.dumps(
+                    build_log_event(
+                        "order_workflow_lookup_failed",
+                        request_id=request_id,
+                        session_id=request.session_id,
+                        tool_name=assistant_tool_name,
+                        tool_result_summary=assistant_tool_result_summary,
+                    )
+                )
+            )
         elif "Your order " in response.answer:
             assistant_tool_result_summary = "order_found"
-            logger.info(json.dumps(build_log_event("order_workflow_succeeded", session_id=request.session_id)))
+            logger.info(
+                json.dumps(
+                    build_log_event(
+                        "order_workflow_succeeded",
+                        request_id=request_id,
+                        session_id=request.session_id,
+                        tool_name=assistant_tool_name,
+                        tool_result_summary=assistant_tool_result_summary,
+                    )
+                )
+            )
 
-    _append_order_response_observability(request, response)
+    _append_order_response_observability(request, response, request_id=request_id)
     session_store.append_message(
         request.session_id,
         "assistant",
@@ -109,11 +143,12 @@ def _append_assistant_message(request: ChatRequest, response: ChatResponse) -> N
     )
 
 
-def _log_order_collecting(request: ChatRequest, updated_state) -> None:
+def _log_order_collecting(request: ChatRequest, updated_state, request_id: str | None = None) -> None:
     logger.info(
         json.dumps(
             build_log_event(
                 "order_workflow_collecting",
+                request_id=request_id,
                 session_id=request.session_id,
                 workflow_state=updated_state.workflow_state.value,
                 verification_status=updated_state.verification_state.status.value,
@@ -123,11 +158,11 @@ def _log_order_collecting(request: ChatRequest, updated_state) -> None:
     )
 
 
-def _handle_order_chat(request: ChatRequest, session_state) -> ChatResponse:
+def _handle_order_chat(request: ChatRequest, session_state, request_id: str | None = None) -> ChatResponse:
     response, updated_state = handle_order_workflow(request.message, session_state)
-    _log_order_collecting(request, updated_state)
+    _log_order_collecting(request, updated_state, request_id=request_id)
     session_store.save(request.session_id, updated_state)
-    _append_assistant_message(request, response)
+    _append_assistant_message(request, response, request_id=request_id)
     return response
 
 
@@ -143,7 +178,7 @@ def _handle_knowledge_chat(request: ChatRequest, session_state) -> ChatResponse:
     )
 
 
-def handle_chat(request: ChatRequest) -> ChatResponse:
+def handle_chat(request: ChatRequest, request_id: str | None = None) -> ChatResponse:
     started_at = time.perf_counter()
     session_state = session_store.load(request.session_id)
     session_state.session_id = request.session_id
@@ -159,12 +194,21 @@ def handle_chat(request: ChatRequest) -> ChatResponse:
     )
 
     if session_state.workflow_state is WorkflowState.COLLECTING_ORDER_VERIFICATION:
-        response = _handle_order_chat(request, session_state)
+        response = _handle_order_chat(request, session_state, request_id=request_id)
     else:
         intent = classify_intent(request.message)
-        logger.info(json.dumps(build_log_event("intent_classified", session_id=request.session_id, intent=intent.value)))
+        logger.info(
+            json.dumps(
+                build_log_event(
+                    "intent_classified",
+                    request_id=request_id,
+                    session_id=request.session_id,
+                    intent=intent.value,
+                )
+            )
+        )
         if intent is Intent.ORDER_STATUS:
-            response = _handle_order_chat(request, session_state)
+            response = _handle_order_chat(request, session_state, request_id=request_id)
         else:
             response = _handle_knowledge_chat(request, session_state)
 
@@ -172,6 +216,7 @@ def handle_chat(request: ChatRequest) -> ChatResponse:
         json.dumps(
             build_log_event(
                 "chat_orchestration_completed",
+                request_id=request_id,
                 session_id=request.session_id,
                 intent=response.intent.value,
                 next_action=response.next_action.value,
@@ -191,7 +236,7 @@ def ensure_streaming_allowed(request: ChatRequest) -> None:
         raise StreamingIntentError(STREAMING_NOT_AVAILABLE_FOR_ORDER_STATUS)
 
 
-def stream_chat(request: ChatRequest) -> Iterator[str]:
+def stream_chat(request: ChatRequest, request_id: str | None = None) -> Iterator[str]:
     session_state = session_store.load(request.session_id)
     session_state.session_id = request.session_id
     user_contains_pii = (
@@ -206,7 +251,16 @@ def stream_chat(request: ChatRequest) -> Iterator[str]:
     )
 
     intent = classify_intent(request.message)
-    logger.info(json.dumps(build_log_event("intent_classified", session_id=request.session_id, intent=intent.value)))
+    logger.info(
+        json.dumps(
+            build_log_event(
+                "intent_classified",
+                request_id=request_id,
+                session_id=request.session_id,
+                intent=intent.value,
+            )
+        )
+    )
 
     full_answer_parts: list[str] = []
     try:
@@ -231,6 +285,7 @@ def stream_chat(request: ChatRequest) -> Iterator[str]:
             json.dumps(
                 build_log_event(
                     "knowledge_stream_failed",
+                    request_id=request_id,
                     session_id=request.session_id,
                     partial_chars=len("".join(full_answer_parts)),
                 )

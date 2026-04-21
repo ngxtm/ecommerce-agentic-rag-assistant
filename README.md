@@ -7,7 +7,7 @@ The repository is designed to demonstrate two distinct backend behaviors behind 
 - grounded knowledge answers from an indexed document corpus
 - a multi-turn order workflow that collects identity signals before returning order status
 
-The current deployed cloud path uses `FastAPI + AWS Lambda + API Gateway + DynamoDB + OpenSearch Serverless + OpenAI-compatible generation`.
+The current deployed cloud path uses `FastAPI + AWS Lambda + API Gateway + DynamoDB + OpenSearch Serverless + Secrets Manager + OpenAI-compatible generation`.
 
 ## Overview
 
@@ -24,7 +24,10 @@ At a high level, a chat request enters the backend, gets classified by intent, a
 - conservative fallback when the retrieved context is insufficient
 - multi-turn order verification workflow
 - DynamoDB-backed session and message persistence
+- externalized order lookup through a dedicated Lambda tool and Orders DynamoDB table
 - optional streaming responses for knowledge queries
+- Secrets Manager-backed LLM credential loading in cloud
+- CloudWatch alarms and X-Ray-ready tracing
 - AWS deployment path managed with Terraform
 
 ## How The System Works
@@ -55,8 +58,9 @@ The order workflow is centered on `app/backend/order_workflow.py`.
 1. Detect that the message is about order status.
 2. Collect verification fields over multiple turns.
 3. Validate the provided identity details.
-4. Look up order information from the mock data source.
-5. Return a verified order response and persist the conversation state.
+4. Invoke a dedicated order-status tool Lambda after verification succeeds.
+5. Read the verified order record from the Orders DynamoDB table.
+6. Return a verified order response and persist the conversation state.
 
 ## RAG Pipeline
 
@@ -130,7 +134,11 @@ This is important for the current corpus because some filing sections are only p
 - API entry: `API Gateway HTTP API`
 - Retrieval store: `OpenSearch Serverless`
 - Generation: `OpenAI-compatible API`
-- Memory: `DynamoDB`
+- Session memory: `DynamoDB`
+- Order lookup tool: `AWS Lambda`
+- Order store: `DynamoDB`
+- Secrets: `AWS Secrets Manager`
+- Observability: `CloudWatch Logs`, `CloudWatch Alarms`, optional `X-Ray`
 - Infrastructure: `Terraform`
 
 ### Deployed architecture note
@@ -148,8 +156,11 @@ app/
     main.py               FastAPI application
     memory_store.py       Session persistence abstraction
     orchestrator.py       Main request routing logic
+    order_lookup_client.py Lambda-invoked order tool client
+    order_tool_handler.py Order tool Lambda handler
     order_workflow.py     Verification-driven order flow
     search_client.py      OpenSearch retrieval and reranking
+    secrets.py            Secrets Manager loader with in-process cache
   frontend/
     streamlit_app.py      Streamlit user interface
 docs/                     Source documents and supporting docs
@@ -200,9 +211,12 @@ OPENSEARCH_COLLECTION_ENDPOINT=<aoss-endpoint>
 OPENSEARCH_INDEX_NAME=policy-faq-chunks
 DOCS_S3_BUCKET=<docs-bucket>
 DOCS_S3_PREFIX=
+ORDER_TOOL_FUNCTION_NAME=<order-tool-lambda-name>
 ```
 
 `DOCS_S3_PREFIX` is optional. Leave it empty when documents live at the bucket root.
+
+For deployed AWS environments, the backend now reads the LLM API key from `LLM_API_KEY_SECRET_NAME` via Secrets Manager instead of storing the raw key in Lambda environment variables.
 
 ### 4. Run the backend
 
