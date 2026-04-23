@@ -136,6 +136,27 @@ def test_risk_factor_refiner_splits_sentence_headings() -> None:
     assert refined[0].subsection == "The Loss of Key Senior Management Personnel or the Inability to Hire and Retain Qualified Personnel Could Harm Our Business"
 
 
+def test_risk_factor_refiner_splits_risks_related_heading() -> None:
+    block = DocumentBlock(
+        part="PART I",
+        item=ITEM_1A_SECTION,
+        label=ITEM_1A_SECTION,
+        lines=[
+            NormalizedLine(9, "Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers", "", 0),
+            NormalizedLine(9, "If we do not optimize and operate these networks efficiently, our cost structure and service levels could be adversely affected.", "", 1),
+            NormalizedLine(9, "We also depend on forecasting and capacity planning.", "", 2),
+        ],
+        page_start=9,
+        page_end=9,
+    )
+
+    refined = _risk_factor_refiner(block)
+
+    assert len(refined) == 1
+    assert refined[0].subsection == "Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers"
+    assert "cost structure" in " ".join(refined[0].lines)
+
+
 def test_mda_refiner_materializes_subsections() -> None:
     block = DocumentBlock(
         part="PART II",

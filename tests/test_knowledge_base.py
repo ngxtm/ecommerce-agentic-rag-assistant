@@ -404,6 +404,47 @@ def test_retrieve_relevant_chunks_prefers_item1a_for_explicit_risk_factor_query(
     assert chunks[0].section == "Item 1A. Risk Factors"
 
 
+@patch("app.backend.knowledge_base.search_chunks")
+def test_retrieve_relevant_chunks_prefers_item1a_for_risks_related_heading_queries(mock_search_chunks: Mock) -> None:
+    exact_heading = _item1a_chunk(
+        score=5.1,
+        subsection="Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers",
+        content="If we do not optimize and operate our fulfillment network and data centers efficiently, our cost structure, service levels, and growth could be adversely affected.",
+    )
+    noise = _item2_chunk(score=5.6)
+    mock_search_chunks.return_value = [noise, exact_heading]
+
+    chunks = retrieve_relevant_chunks("Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers")
+
+    assert chunks
+    assert chunks[0].item == "Item 1A. Risk Factors"
+    assert chunks[0].subsection == "Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers"
+
+
+@patch("app.backend.knowledge_base.search_chunks")
+def test_retrieve_relevant_chunks_prefers_item1a_for_generalized_risk_summary_queries(mock_search_chunks: Mock) -> None:
+    mock_search_chunks.return_value = [
+        _sample_chunk(),
+        _item1a_chunk(score=5.1),
+        _item1a_chunk(
+            score=4.8,
+            subsection="Risks Related to Competition and Execution",
+            content="Competition, pricing pressure, and execution challenges could adversely affect operating results.",
+        ),
+    ]
+
+    for question in (
+        "Summarize the risk factors described in Item 1A of Amazon's filing.",
+        "Provide a structured overview of the major risk factors in Item 1A and how they could affect the business.",
+        "Explain the major themes in Item 1A Risk Factors and their business impact.",
+    ):
+        chunks = retrieve_relevant_chunks(question)
+
+        assert chunks
+        assert all(chunk.item == "Item 1A. Risk Factors" for chunk in chunks)
+        assert chunks[0].section == "Item 1A. Risk Factors"
+
+
 def test_build_sources_deduplicates_by_semantic_key_for_profile_rows() -> None:
     first = _profile_row_chunk()
     duplicate = RetrievedChunk(**{**first.__dict__, "chunk_id": "exec-row-2", "score": 4.5})
@@ -584,6 +625,53 @@ def test_generate_grounded_answer_synthesizes_summary_when_narrative_chunks_are_
     assert "Government Regulation Is Evolving" in answer
     assert "Intellectual Property Rights and Being Accused of Infringing" in answer
     mock_generate_chat_completion.assert_called_once()
+
+
+@patch("app.backend.knowledge_base.generate_chat_completion")
+def test_generate_grounded_answer_marks_item1a_summary_as_limited_when_excerpt_is_narrow(mock_generate_chat_completion: Mock) -> None:
+    mock_generate_chat_completion.return_value = "A narrow Item 1A summary"
+
+    answer = generate_grounded_answer(
+        "Summarize the risk factors described in Item 1A of Amazon's filing in a structured way.",
+        [_item1a_chunk(score=5.0)],
+    )
+
+    assert "limited Item 1A excerpt" in answer
+
+
+@patch("app.backend.knowledge_base.generate_chat_completion")
+def test_generate_grounded_answer_rejects_missing_specific_item1a_heading(mock_generate_chat_completion: Mock) -> None:
+    mock_generate_chat_completion.return_value = CONSERVATIVE_FALLBACK
+    answer = generate_grounded_answer(
+        "Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers",
+        [
+            _item1a_chunk(score=5.0),
+            _item1a_chunk(
+                score=4.8,
+                subsection="Intellectual Property Rights and Being Accused of Infringing",
+                content="Our digital content offerings depend in part on effective digital rights management technology.",
+            ),
+        ],
+    )
+
+    assert "do not see" in answer.casefold()
+    assert "18-page filing extract" in answer
+
+
+@patch.dict("os.environ", {"KB_ACTIVE_QUESTION": "Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers"}, clear=False)
+def test_build_sources_omits_misleading_sources_for_missing_item1a_heading() -> None:
+    sources = _build_sources(
+        [
+            _item1a_chunk(score=5.0),
+            _item1a_chunk(
+                score=4.8,
+                subsection="Intellectual Property Rights and Being Accused of Infringing",
+                content="Our digital content offerings depend in part on effective digital rights management technology.",
+            ),
+        ]
+    )
+
+    assert sources == []
 
 
 @patch("app.backend.knowledge_base.retrieve_relevant_chunks")

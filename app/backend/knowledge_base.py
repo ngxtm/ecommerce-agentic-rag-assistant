@@ -102,6 +102,24 @@ ITEM_EXPECTATION_RULES = (
 )
 
 
+def _looks_like_risk_heading(question: str) -> bool:
+    lower = question.casefold().strip()
+    if not lower:
+        return False
+    if lower.startswith("risks related to "):
+        return True
+    return any(
+        phrase in lower
+        for phrase in (
+            "risk factor",
+            "risk factors",
+            "could harm our business",
+            "could adversely affect our business",
+            "may adversely affect our business",
+        )
+    )
+
+
 def _extract_question_keywords(question: str) -> set[str]:
     tokens = {token for token in re.findall(r"[a-z0-9]+", question.casefold()) if token not in STOPWORDS}
     normalized = set(tokens)
@@ -126,14 +144,23 @@ def _is_numeric_question(question: str) -> bool:
 def _classify_question_intent(question: str) -> str:
     question_lower = question.casefold()
     keywords = _extract_question_keywords(question)
+    expected_items = _expected_items(question)
     if _is_numeric_question(question):
         return "numeric_table"
+    if "Item 1A. Risk Factors" in expected_items:
+        if any(keyword in question_lower for keyword in ("summarize", "summary", "overview", "major themes", "structured", "explain")):
+            return "narrative_explainer"
+        return "heading_lookup"
     if question_lower.startswith("who is ") or question_lower.startswith("who are "):
         return "entity_lookup"
     if "selected consolidated financial data" in question_lower:
         return "numeric_table"
     if keywords & EXECUTIVE_QUERY_HINTS:
         return "entity_lookup"
+    if "Item 7A. Quantitative and Qualitative Disclosures About Market Risk" in expected_items:
+        return "narrative_explainer"
+    if _looks_like_risk_heading(question):
+        return "heading_lookup"
     if not (keywords & MARKET_RISK_QUERY_HINTS or "item 7a" in question_lower) and keywords & RISK_QUERY_HINTS and len(question.split()) >= 6:
         return "heading_lookup"
     if keywords & (BUSINESS_QUERY_HINTS | PROPERTIES_QUERY_HINTS | LEGAL_QUERY_HINTS | MARKET_RISK_QUERY_HINTS | ITEM8_QUERY_HINTS):
@@ -180,6 +207,48 @@ def _heading_query_text(question: str) -> str | None:
         return None
     normalized = question.strip().strip("?. ")
     return normalized or None
+
+
+def _has_multiple_item1a_subsections(chunks: list[RetrievedChunk]) -> bool:
+    subsections = {chunk.subsection for chunk in chunks if chunk.item == "Item 1A. Risk Factors" and chunk.subsection}
+    return len(subsections) >= 2
+
+
+def _best_heading_overlap(question: str, chunks: list[RetrievedChunk]) -> int:
+    heading_text = _heading_query_text(question)
+    if not heading_text:
+        return 0
+    question_tokens = _heading_specific_tokens(question)
+    best = 0
+    for chunk in chunks:
+        if chunk.section != "Item 1A. Risk Factors" or not chunk.subsection:
+            continue
+        subsection = chunk.subsection.casefold()
+        if heading_text.casefold() == subsection:
+            return 100
+        subsection_tokens = set(re.findall(r"[a-z0-9]+", subsection))
+        best = max(best, len(question_tokens & subsection_tokens))
+    return best
+
+
+def _item1a_excerpt_summary_prefix(chunks: list[RetrievedChunk]) -> str:
+    if _has_multiple_item1a_subsections(chunks):
+        return "Based on the Item 1A excerpts available in this 18-page filing extract"
+    return "Based on the limited Item 1A excerpt available in this 18-page filing extract"
+
+
+def _unsupported_item1a_heading_answer(question: str, chunks: list[RetrievedChunk]) -> str:
+    heading_text = _heading_query_text(question) or "that specific risk heading"
+    available_subsections = sorted({chunk.subsection for chunk in chunks if chunk.item == "Item 1A. Risk Factors" and chunk.subsection})
+    if available_subsections:
+        available_text = ", ".join(f"'{name}'" for name in available_subsections[:3])
+        return (
+            f"I do not see **{heading_text}** in the available excerpts from Item 1A in this 18-page filing extract. "
+            f"The indexed Item 1A coverage here is limited to subsection(s) such as {available_text}."
+        )
+    return (
+        f"I do not see **{heading_text}** in the available excerpts from Item 1A in this 18-page filing extract."
+    )
 
 
 def _expected_items(question: str) -> set[str]:
@@ -447,6 +516,11 @@ def _grounded_narrative_answer(question: str, chunks: list[RetrievedChunk]) -> s
     if expected_items and not any(chunk.item in expected_items for chunk in chunks):
         return CONSERVATIVE_FALLBACK
 
+    if expected_items == {"Item 1A. Risk Factors"} and not _has_multiple_item1a_subsections(chunks):
+        return (
+            f"{_item1a_excerpt_summary_prefix(chunks)}, I can only summarize the risk theme that is actually present in the indexed material rather than all of Item 1A."
+        )
+
     if expected_items == {"Item 3. Legal Proceedings"}:
         lead = chunks[0]
         if _is_cross_reference_only(lead):
@@ -507,7 +581,10 @@ def _synthesize_grounded_narrative_summary(question: str, chunks: list[Retrieved
     if len(summary_lines) < 2:
         return None
 
-    return f"The available context in {leading_item} highlights these supported themes:\n" + "\n".join(summary_lines)
+    prefix = f"The available context in {leading_item} highlights these supported themes:\n"
+    if expected_items == {"Item 1A. Risk Factors"}:
+        prefix = f"{_item1a_excerpt_summary_prefix(chunks)}, these are the supported themes I can ground:\n"
+    return prefix + "\n".join(summary_lines)
 
 
 def _build_messages(question: str, context: str) -> list[dict[str, str]]:
@@ -557,6 +634,9 @@ def generate_grounded_answer(question: str, chunks: list[RetrievedChunk]) -> str
             row = exact_rows[0]
             unit = f" {row.unit}" if row.unit else ""
             return f"{row.metric} in {row.year} were **{row.value_raw}{unit}**."
+    if intent == "heading_lookup":
+        if _best_heading_overlap(question, chunks) < 4:
+            return _unsupported_item1a_heading_answer(question, chunks)
     narrative_answer = _grounded_narrative_answer(question, chunks)
     if narrative_answer is not None:
         return narrative_answer
@@ -695,6 +775,9 @@ def _trim_source_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
 
 
 def _build_sources(chunks: list[RetrievedChunk]) -> list[SourceItem]:
+    active_question = os.getenv("KB_ACTIVE_QUESTION", "")
+    if _classify_question_intent(active_question) == "heading_lookup" and _best_heading_overlap(active_question, chunks) < 4:
+        return []
     sources: list[SourceItem] = []
     for chunk in _trim_source_chunks(chunks):
         sources.append(

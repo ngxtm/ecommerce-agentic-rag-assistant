@@ -894,6 +894,12 @@ def _is_risk_heading(line: str) -> bool:
         return False
     if line.endswith("."):
         return False
+    normalized = _normalize_text_line(line)
+    lowered = normalized.casefold()
+    if lowered.startswith("risks related to "):
+        return True
+    if lowered.startswith("we are subject to ") and len(words) >= 7:
+        return True
     lowercase_words = sum(1 for word in words if word.islower())
     return lowercase_words >= 2 and not line.startswith("We ")
 
@@ -902,7 +908,16 @@ def _split_embedded_risk_heading(line: str) -> tuple[str, str] | None:
     normalized = _normalize_text_line(line)
     if not normalized or len(normalized.split()) < 10:
         return None
-    match = re.match(r"^(?P<heading>.+?(?:Could Harm Our Business|May Harm Our Business|May Adversely Affect Our Business|Could Adversely Affect Our Business))\s+(?P<body>Our |We |This ).*$", normalized)
+    if normalized.casefold().startswith(("risks related to ", "we are subject to ", "we face risks related to ")):
+        match = re.match(
+            r"^(?P<heading>(?:Risks Related to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+|We Are Subject to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+|We Face Risks Related to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+))\s+(?P<body>(?:We|This|If) ).*$",
+            normalized,
+        )
+    else:
+        match = re.match(
+            r"^(?P<heading>(?:.+?(?:Could Harm Our Business|May Harm Our Business|May Adversely Affect Our Business|Could Adversely Affect Our Business)))\s+(?P<body>(?:Our|We|This|If) ).*$",
+            normalized,
+        )
     if not match:
         return None
     heading = _normalize_text_line(match.group("heading"))
@@ -929,7 +944,7 @@ def _extract_risk_sections_from_text(text: str) -> list[tuple[str, str]]:
             )
         )
     pattern = re.compile(
-        r"(?P<heading>[A-Z][A-Za-z0-9,;:'’\-()&/ ]+?(?:Could Harm Our Business|May Harm Our Business|May Adversely Affect Our Business|Could Adversely Affect Our Business))\s+(?P<body>(?:Our|We|This) .*?)(?=(?:[A-Z][A-Za-z0-9,;:'’\-()&/ ]+?(?:Could Harm Our Business|May Harm Our Business|May Adversely Affect Our Business|Could Adversely Affect Our Business))\s+(?:Our|We|This)|$)"
+        r"(?P<heading>(?:[A-Z][A-Za-z0-9,;:'’\-()&/ ]+?(?:Could Harm Our Business|May Harm Our Business|May Adversely Affect Our Business|Could Adversely Affect Our Business)|Risks Related to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+?|We Are Subject to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+?|We Face Risks Related to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+?))\s+(?P<body>(?:Our|We|This) .*?)(?=(?:(?:[A-Z][A-Za-z0-9,;:'’\-()&/ ]+?(?:Could Harm Our Business|May Harm Our Business|May Adversely Affect Our Business|Could Adversely Affect Our Business)|Risks Related to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+?|We Are Subject to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+?|We Face Risks Related to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+?))\s+(?:Our|We|This)|$)"
     )
     for match in pattern.finditer(normalized):
         heading = _normalize_text_line(match.group("heading"))
@@ -948,6 +963,9 @@ def _risk_factor_refiner(block: DocumentBlock) -> list[RefinedBlock]:
     current_heading: str | None = None
     current_lines: list[str] = []
     for line in (entry.text for entry in block.lines):
+        normalized_line = _normalize_text_line(line)
+        if not normalized_line:
+            continue
         embedded_heading = _split_embedded_risk_heading(line)
         if embedded_heading:
             if current_heading and current_lines:
@@ -955,14 +973,23 @@ def _risk_factor_refiner(block: DocumentBlock) -> list[RefinedBlock]:
             current_heading, first_body_line = embedded_heading
             current_lines = [first_body_line]
             continue
-        if _is_risk_heading(line):
+        body_cues = (
+            normalized_line.startswith("Our ")
+            or normalized_line.startswith("We ")
+            or normalized_line.startswith("If ")
+            or normalized_line.startswith("This ")
+        )
+        if current_heading and not current_lines and not body_cues and len(f"{current_heading} {normalized_line}".split()) <= 30:
+            current_heading = f"{current_heading} {normalized_line}"
+            continue
+        if _is_risk_heading(normalized_line):
             if current_heading and current_lines:
                 refined.append(_make_block(block, ITEM_1A_SECTION, current_heading, "narrative", [current_heading, *current_lines]))
-            current_heading = line
+            current_heading = normalized_line
             current_lines = []
             continue
         if current_heading:
-            current_lines.append(line)
+            current_lines.append(normalized_line)
     if current_heading and current_lines:
         refined.append(_make_block(block, ITEM_1A_SECTION, current_heading, "narrative", [current_heading, *current_lines]))
     if refined:

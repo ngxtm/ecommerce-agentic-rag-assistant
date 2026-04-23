@@ -6,6 +6,8 @@ from app.backend.search_client import (
     _build_lexical_query,
     _classify_query_intent,
     _merge_candidates,
+    _search_with_query_variants,
+    rewrite_search_query,
     search_chunks,
 )
 
@@ -52,6 +54,8 @@ def test_classify_query_intent_handles_numeric_entity_and_heading_queries() -> N
     assert _classify_query_intent("What were net sales in 2019?") == "numeric_table"
     assert _classify_query_intent("Who are the executive officers and directors?") == "entity_lookup"
     assert _classify_query_intent("The Loss of Key Senior Management Personnel Could Harm Our Business") == "heading_lookup"
+    assert _classify_query_intent("Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers") == "heading_lookup"
+    assert _classify_query_intent("Summarize the risk factors described in Item 1A of Amazon's filing.") == "narrative_explainer"
     assert _classify_query_intent("What facilities did Amazon operate?") == "narrative_explainer"
     assert _classify_query_intent("Market for the Registrant's Common Stock, Related Shareholder Matters, and Issuer Purchases of Equity Securities") == "narrative_explainer"
 
@@ -68,6 +72,95 @@ def test_build_lexical_query_boosts_subsection_for_heading_lookup() -> None:
     phrase_fields = query["query"]["bool"]["should"][1]["multi_match"]["fields"]
 
     assert "subsection^16" in phrase_fields or "subsection^12" in phrase_fields
+
+
+def test_build_lexical_query_routes_explicit_item1a_summary_to_heading_lookup() -> None:
+    query = _build_lexical_query("Summarize the risk factors described in Item 1A of Amazon's filing.", top_k=4)
+    should_clauses = query["query"]["bool"]["should"]
+
+    assert any(clause.get("term", {}).get("item.keyword", {}).get("value") == "Item 1A. Risk Factors" for clause in should_clauses)
+
+
+@patch("app.backend.search_client.generate_chat_completion")
+def test_rewrite_search_query_returns_short_keyword_query(mock_generate_chat_completion: Mock) -> None:
+    mock_generate_chat_completion.return_value = "Item 1A Risk Factors fulfillment network data centers operational risk"
+
+    rewritten = rewrite_search_query("Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers")
+
+    assert rewritten == "Item 1A Risk Factors fulfillment network data centers operational risk"
+
+
+@patch("app.backend.search_client.rewrite_search_query")
+@patch("app.backend.search_client._run_vector_search")
+@patch("app.backend.search_client._run_lexical_search")
+def test_search_with_query_variants_retries_when_heading_match_is_weak(mock_run_lexical_search: Mock, mock_run_vector_search: Mock, mock_rewrite: Mock) -> None:
+    weak_item1a = RetrievedChunk(
+        chunk_id="risk-weak",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 1A. Risk Factors",
+        content="Generic risk language.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=1.5,
+        lexical_score=1.5,
+        vector_score=0.0,
+        item="Item 1A. Risk Factors",
+        subsection="Intellectual Property Rights and Being Accused of Infringing",
+        content_type="narrative",
+    )
+    exact_heading = RetrievedChunk(
+        chunk_id="risk-exact",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 1A. Risk Factors",
+        content="If we do not optimize and operate our fulfillment network and data centers efficiently, our business could be adversely affected.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=5.0,
+        lexical_score=5.0,
+        vector_score=0.0,
+        item="Item 1A. Risk Factors",
+        subsection="Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers",
+        content_type="narrative",
+    )
+    mock_run_lexical_search.side_effect = [[weak_item1a], [exact_heading]]
+    mock_run_vector_search.side_effect = [[], []]
+    mock_rewrite.return_value = "Item 1A Risk Factors fulfillment network data centers operating risk"
+
+    merged = _search_with_query_variants(Mock(), "policy-faq-chunks", "Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers", 4)
+
+    assert merged[0].chunk_id == "risk-exact"
+    mock_rewrite.assert_called_once()
+
+
+@patch("app.backend.search_client.rewrite_search_query")
+@patch("app.backend.search_client._run_vector_search")
+@patch("app.backend.search_client._run_lexical_search")
+def test_search_with_query_variants_skips_rewrite_when_first_pass_is_strong(mock_run_lexical_search: Mock, mock_run_vector_search: Mock, mock_rewrite: Mock) -> None:
+    exact_heading = RetrievedChunk(
+        chunk_id="risk-exact",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 1A. Risk Factors",
+        content="If we do not optimize and operate our fulfillment network and data centers efficiently, our business could be adversely affected.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        score=5.0,
+        lexical_score=5.0,
+        vector_score=0.0,
+        item="Item 1A. Risk Factors",
+        subsection="Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers",
+        content_type="narrative",
+    )
+    mock_run_lexical_search.return_value = [exact_heading]
+    mock_run_vector_search.return_value = []
+    mock_rewrite.return_value = "unused rewrite"
+
+    merged = _search_with_query_variants(Mock(), "policy-faq-chunks", "Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers", 4)
+
+    assert merged[0].chunk_id == "risk-exact"
+    mock_rewrite.assert_not_called()
 
 
 def test_build_lexical_query_includes_subsubsection_for_narrative_queries() -> None:

@@ -11,7 +11,7 @@ from requests_aws4auth import AWS4Auth
 
 from app.backend.aws_auth import get_frozen_credentials
 from app.backend.config import get_aws_region
-from app.backend.llm_client import LLMClientError, generate_embedding
+from app.backend.llm_client import LLMClientError, generate_chat_completion, generate_embedding
 
 TARGET_INDEX_VERSION = "v2_parser_foundation"
 VECTOR_FIELD = "embedding"
@@ -20,6 +20,8 @@ VECTOR_CANDIDATE_MULTIPLIER = 3
 MIN_VECTOR_DIMENSIONS = 8
 LEXICAL_WEIGHT = 0.8
 VECTOR_WEIGHT = 0.2
+MIN_REWRITE_WORDS = 3
+MAX_REWRITE_WORDS = 18
 EXECUTIVE_QUERY_HINTS = (
     "executive officer",
     "executive officers",
@@ -30,9 +32,22 @@ EXECUTIVE_QUERY_HINTS = (
 )
 RISK_HEADING_HINTS = (
     "risk factor",
+    "risk factors",
+    "risks related to",
     "could harm our business",
+    "could adversely affect our business",
+    "may adversely affect our business",
     "loss of key senior management personnel",
 )
+
+
+def _looks_like_risk_heading(question: str) -> bool:
+    normalized = _normalize_question_text(question)
+    if not normalized:
+        return False
+    if any(hint in normalized for hint in RISK_HEADING_HINTS):
+        return True
+    return normalized.startswith("risks related to ")
 NUMERIC_QUERY_HINTS = (
     "net sales",
     "operating income",
@@ -60,6 +75,22 @@ ITEM_5_HINTS = (
 ITEM_7A_HINTS = ("market risk", "item 7a", "interest rate risk", "foreign exchange risk", "foreign currency risk", "equity investment risk")
 ITEM_8_HINTS = ("item 8", "financial statements", "supplementary data", "balance sheets", "cash flows", "stockholders", "statements of operations")
 EXPLICIT_ITEM_ROUTING_RULES = (
+    {
+        "item": "Item 1A. Risk Factors",
+        "hints": (
+            "item 1a",
+            "item 1a risk factors",
+            "risk factors described in item 1a",
+            "summarize the risk factors described in item 1a",
+            "risk factors in item 1a",
+        ),
+        "expansion": "Item 1A Risk Factors major themes business impacts uncertainty could harm our business",
+        "boosts": (
+            {"term": {"item.keyword": {"value": "Item 1A. Risk Factors", "boost": 30}}},
+            {"term": {"section.keyword": {"value": "Item 1A. Risk Factors", "boost": 30}}},
+        ),
+        "intent": "heading_lookup",
+    },
     {
         "item": "Item 1. Business",
         "hints": ("item 1", "item 1 business"),
@@ -226,6 +257,44 @@ def _normalize_question_text(question: str) -> str:
     return re.sub(r"\s+", " ", question.casefold()).strip(" ?.\n\t")
 
 
+def rewrite_search_query(question: str) -> str | None:
+    normalized = _normalize_question_text(question)
+    if not normalized:
+        return None
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Rewrite the user's retrieval query into one short search query for a 10-K index. "
+                "Preserve explicit item numbers, years, metrics, and exact risk heading cues. "
+                "Do not answer the question. Return only the rewritten query."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Rewrite this for retrieval against a filing index. Keep it concise and keyword-rich.\n\n"
+                f"Question: {question}"
+            ),
+        },
+    ]
+    try:
+        rewritten = generate_chat_completion(messages)
+    except (ValueError, LLMClientError):
+        return None
+
+    cleaned = re.sub(r"\s+", " ", rewritten).strip().strip("\"'")
+    if not cleaned:
+        return None
+    word_count = len(cleaned.split())
+    if word_count < MIN_REWRITE_WORDS or word_count > MAX_REWRITE_WORDS:
+        return None
+    if _normalize_question_text(cleaned) == normalized:
+        return None
+    return cleaned
+
+
 def _explicit_item_rule(question: str) -> dict[str, object] | None:
     normalized = _normalize_question_text(question)
     for rule in EXPLICIT_ITEM_ROUTING_RULES:
@@ -245,9 +314,12 @@ def _classify_query_intent(question: str) -> str:
         return "entity_lookup"
     if any(hint in normalized for hint in EXECUTIVE_QUERY_HINTS):
         return "entity_lookup"
+    if explicit_item is not None and str(explicit_item["item"]) == "Item 1A. Risk Factors":
+        if any(keyword in normalized for keyword in ("summarize", "summary", "overview", "major themes", "structured", "explain")):
+            return "narrative_explainer"
     if explicit_item is not None:
         return str(explicit_item["intent"])
-    if any(hint in normalized for hint in RISK_HEADING_HINTS) or (len(question.split()) >= 8 and question[:1].isupper()):
+    if _looks_like_risk_heading(question) or (len(question.split()) >= 8 and question[:1].isupper()):
         return "heading_lookup"
     if any(hint in normalized for hint in ITEM_1_HINTS + ITEM_2_HINTS + ITEM_3_HINTS + ITEM_5_HINTS + ITEM_7A_HINTS + ITEM_8_HINTS):
         return "narrative_explainer"
@@ -349,9 +421,9 @@ def _build_lexical_query(question: str, top_k: int) -> dict[str, object]:
             }
         },
     ]
+    if explicit_item is not None:
+        should.extend(explicit_item["boosts"])
     if intent == "narrative_explainer":
-        if explicit_item is not None:
-            should.extend(explicit_item["boosts"])
         if any(hint in normalized for hint in ITEM_1_HINTS) and not any(hint in normalized for hint in ITEM_2_HINTS):
             should.append({"term": {"item.keyword": {"value": "Item 1. Business", "boost": 25}}})
             should.append({"term": {"subsection.keyword": {"value": "General", "boost": 12}}})
@@ -436,6 +508,60 @@ def _run_lexical_search(client: OpenSearch, index_name: str, question: str, top_
     return chunks
 
 
+def _best_item_match(chunks: list[RetrievedChunk], expected_item: str) -> bool:
+    return any(chunk.item == expected_item for chunk in chunks)
+
+
+def _has_heading_subsection_overlap(question: str, chunks: list[RetrievedChunk]) -> bool:
+    normalized = _normalize_question_text(question)
+    question_tokens = set(re.findall(r"[a-z0-9]+", normalized))
+    for chunk in chunks:
+        subsection = (chunk.subsection or "").casefold()
+        if not subsection:
+            continue
+        if subsection in normalized or normalized in subsection:
+            return True
+        subsection_tokens = set(re.findall(r"[a-z0-9]+", subsection))
+        if len(question_tokens & subsection_tokens) >= 4:
+            return True
+    return False
+
+
+def _should_retry_with_rewrite(question: str, chunks: list[RetrievedChunk]) -> bool:
+    if not chunks:
+        return True
+    intent = _classify_query_intent(question)
+    top_score = max(chunk.score for chunk in chunks)
+    if top_score < 0.2:
+        return True
+    if intent == "heading_lookup":
+        if not _best_item_match(chunks, "Item 1A. Risk Factors"):
+            return True
+        if not _has_heading_subsection_overlap(question, chunks[:4]):
+            return True
+    if intent == "narrative_explainer":
+        explicit_item = _explicit_item_rule(question)
+        if explicit_item is not None and not _best_item_match(chunks[:4], str(explicit_item["item"])):
+            return True
+    return False
+
+
+def _search_with_query_variants(client: OpenSearch, index_name: str, question: str, top_k: int) -> list[RetrievedChunk]:
+    lexical_chunks = _run_lexical_search(client, index_name, question, top_k)
+    vector_chunks = _run_vector_search(client, index_name, question, top_k)
+    merged = _merge_candidates(lexical_chunks, vector_chunks, top_k)
+    if not _should_retry_with_rewrite(question, merged):
+        return merged
+
+    rewritten = rewrite_search_query(question)
+    if not rewritten:
+        return merged
+
+    rewritten_lexical_chunks = _run_lexical_search(client, index_name, rewritten, top_k)
+    rewritten_vector_chunks = _run_vector_search(client, index_name, rewritten, top_k)
+    return _merge_candidates(lexical_chunks + rewritten_lexical_chunks, vector_chunks + rewritten_vector_chunks, top_k)
+
+
 def _run_vector_search(client: OpenSearch, index_name: str, question: str, top_k: int) -> list[RetrievedChunk]:
     response = client.search(index=index_name, body=_build_vector_query(top_k))
     hits = response.get("hits", {}).get("hits", [])
@@ -515,9 +641,8 @@ def search_chunks(question: str, top_k: int = 4) -> list[RetrievedChunk]:
 
     client = _build_client()
     try:
-        lexical_chunks = _run_lexical_search(client, index_name, question, top_k)
-        vector_chunks = _run_vector_search(client, index_name, question, top_k)
+        merged_chunks = _search_with_query_variants(client, index_name, question, top_k)
     except OpenSearchException as exc:
         raise RuntimeError("OpenSearch search failed.") from exc
 
-    return _merge_candidates(lexical_chunks, vector_chunks, top_k)
+    return merged_chunks
