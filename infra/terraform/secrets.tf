@@ -1,5 +1,5 @@
 resource "aws_secretsmanager_secret" "llm_api_key" {
-  name = var.llm_api_key_secret_name
+  name = local.effective_llm_api_key_secret
 
   tags = local.base_tags
 }

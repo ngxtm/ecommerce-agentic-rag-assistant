@@ -38,8 +38,6 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
       TF_VAR_llm_api_key: ${{ secrets.TF_VAR_llm_api_key }}
-      TF_VAR_llm_api_key_secret_name: ${{ vars.TF_VAR_llm_api_key_secret_name || 'agentic-commerce-llm-api-key-dev' }}
-      TF_VAR_docs_bucket_name: ${{ vars.TF_VAR_docs_bucket_name }}
       TF_VAR_opensearch_collection_name: ${{ vars.TF_VAR_opensearch_collection_name || 'agentic-commerce-knowledge-dev' }}
 
     steps:
@@ -53,8 +51,6 @@ jobs:
           [[ -z "$AWS_ACCESS_KEY_ID" ]] && missing+=("AWS_ACCESS_KEY_ID")
           [[ -z "$AWS_SECRET_ACCESS_KEY" ]] && missing+=("AWS_SECRET_ACCESS_KEY")
           [[ -z "$TF_VAR_llm_api_key" ]] && missing+=("TF_VAR_llm_api_key")
-          [[ -z "$TF_VAR_llm_api_key_secret_name" ]] && missing+=("TF_VAR_llm_api_key_secret_name")
-          [[ -z "$TF_VAR_docs_bucket_name" ]] && missing+=("TF_VAR_docs_bucket_name")
           [[ -z "$TF_VAR_opensearch_collection_name" ]] && missing+=("TF_VAR_opensearch_collection_name")
 
           if (( ${#missing[@]} > 0 )); then
@@ -88,20 +84,17 @@ jobs:
           TF_VAR_environment: ${{ vars.TF_VAR_environment || 'dev' }}
           TF_VAR_aws_region: ${{ vars.TF_VAR_aws_region || 'us-east-1' }}
           TF_VAR_lambda_function_name: ${{ vars.TF_VAR_lambda_function_name || 'agentic-commerce-backend-dev' }}
-          TF_VAR_order_tool_function_name: ${{ vars.TF_VAR_order_tool_function_name || 'agentic-commerce-order-tool-dev' }}
           TF_VAR_conversation_table_name: ${{ vars.TF_VAR_conversation_table_name || 'agentic-commerce-conversation-dev' }}
-          TF_VAR_orders_table_name: ${{ vars.TF_VAR_orders_table_name || 'agentic-commerce-orders-dev' }}
           TF_VAR_api_name: ${{ vars.TF_VAR_api_name || 'agentic-commerce-api-dev' }}
-          TF_VAR_docs_bucket_name: ${{ env.TF_VAR_docs_bucket_name }}
-          TF_VAR_create_docs_bucket: ${{ vars.TF_VAR_create_docs_bucket || 'false' }}
+          TF_VAR_create_docs_bucket: ${{ vars.TF_VAR_create_docs_bucket || 'true' }}
           TF_VAR_docs_s3_prefix: ${{ vars.TF_VAR_docs_s3_prefix || 'phase1-kb/' }}
           TF_VAR_opensearch_collection_name: ${{ env.TF_VAR_opensearch_collection_name }}
           TF_VAR_opensearch_collection_type: ${{ vars.TF_VAR_opensearch_collection_type || 'SEARCH' }}
           TF_VAR_opensearch_allow_public_access: ${{ vars.TF_VAR_opensearch_allow_public_access || 'true' }}
           TF_VAR_opensearch_index_name: ${{ vars.TF_VAR_opensearch_index_name || 'policy-faq-chunks' }}
+          TF_VAR_enable_docs_ingestion_trigger: ${{ vars.TF_VAR_enable_docs_ingestion_trigger || 'true' }}
           TF_VAR_llm_provider: ${{ vars.TF_VAR_llm_provider || 'openai_compatible' }}
           TF_VAR_llm_api_key: ${{ env.TF_VAR_llm_api_key }}
-          TF_VAR_llm_api_key_secret_name: ${{ env.TF_VAR_llm_api_key_secret_name }}
           TF_VAR_llm_base_url: ${{ vars.TF_VAR_llm_base_url || 'https://r2lj67q.9router.com/v1' }}
           TF_VAR_llm_model: ${{ vars.TF_VAR_llm_model || 'cx/gpt-5.4' }}
           TF_VAR_lambda_artifact_path: ../../artifacts/backend-lambda.zip

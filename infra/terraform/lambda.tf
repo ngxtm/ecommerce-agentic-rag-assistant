@@ -30,14 +30,14 @@ resource "aws_lambda_function" "backend" {
 }
 
 resource "aws_cloudwatch_log_group" "order_tool" {
-  name              = "/aws/lambda/${var.order_tool_function_name}"
+  name              = "/aws/lambda/${local.effective_order_tool_function}"
   retention_in_days = var.lambda_log_retention_days
 
   tags = local.base_tags
 }
 
 resource "aws_lambda_function" "order_tool" {
-  function_name = var.order_tool_function_name
+  function_name = local.effective_order_tool_function
   role          = aws_iam_role.order_tool.arn
   runtime       = var.lambda_runtime
   handler       = var.order_tool_handler
@@ -56,6 +56,37 @@ resource "aws_lambda_function" "order_tool" {
   }
 
   depends_on = [aws_cloudwatch_log_group.order_tool]
+
+  tags = local.base_tags
+}
+
+resource "aws_cloudwatch_log_group" "ingestion" {
+  name              = "/aws/lambda/${local.ingestion_lambda_function_name}"
+  retention_in_days = var.lambda_log_retention_days
+
+  tags = local.base_tags
+}
+
+resource "aws_lambda_function" "ingestion" {
+  function_name = local.ingestion_lambda_function_name
+  role          = aws_iam_role.ingestion.arn
+  runtime       = var.lambda_runtime
+  handler       = var.ingestion_lambda_handler
+  timeout       = var.ingestion_lambda_timeout_seconds
+  memory_size   = var.ingestion_lambda_memory_mb
+
+  filename         = var.lambda_artifact_path
+  source_code_hash = filebase64sha256(var.lambda_artifact_path)
+
+  environment {
+    variables = local.ingestion_lambda_environment
+  }
+
+  tracing_config {
+    mode = var.enable_xray ? "Active" : "PassThrough"
+  }
+
+  depends_on = [aws_cloudwatch_log_group.ingestion]
 
   tags = local.base_tags
 }

@@ -8,6 +8,7 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Iterable
 
 from dotenv import load_dotenv
 from opensearchpy.exceptions import ConnectionTimeout, NotFoundError, RequestError
@@ -16,6 +17,11 @@ try:
     from pypdf import PdfReader
 except ModuleNotFoundError:  # pragma: no cover - exercised indirectly when dependency is absent
     PdfReader = None
+
+try:
+    from docx import Document as DocxDocument
+except ModuleNotFoundError:  # pragma: no cover - exercised indirectly when dependency is absent
+    DocxDocument = None
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -28,6 +34,7 @@ LEGACY_MARKDOWN_DOC_IDS = (
     "order_tracking_faq",
 )
 MAX_CHUNK_CHARS = 800
+TEXT_CHUNK_PARAGRAPHS = 3
 INDEX_SCHEMA_VERSION = "v2_parser_foundation"
 PRIMARY_TABLE_SECTION = "Item 6. Selected Consolidated Financial Data"
 EXECUTIVE_OFFICERS_SECTION = "Executive Officers and Directors"
@@ -1273,11 +1280,98 @@ def _build_pdf_documents(path: Path, updated_at: str) -> list[ChunkDocument]:
     return _deduplicate_documents(documents)
 
 
-def build_documents() -> list[ChunkDocument]:
+def _build_chunked_text_documents(path: Path, updated_at: str, raw_text: str) -> list[ChunkDocument]:
+    paragraphs = [_normalize_text_line(part) for part in re.split(r"\n\s*\n+", raw_text) if _normalize_text_line(part)]
+    if not paragraphs:
+        return []
+    source_uri = _s3_source_uri(path)
+    doc_id = _stable_content_hash(path.name)
+    chunks: list[ChunkDocument] = []
+    current_parts: list[str] = []
+    current_length = 0
+
+    for paragraph in paragraphs:
+        candidate_length = current_length + len(paragraph) + (2 if current_parts else 0)
+        if current_parts and (candidate_length > MAX_CHUNK_CHARS or len(current_parts) >= TEXT_CHUNK_PARAGRAPHS):
+            content = "\n\n".join(current_parts)
+            chunks.append(
+                ChunkDocument(
+                    chunk_id=_build_chunk_id(doc_id, str(len(chunks)), content),
+                    doc_id=doc_id,
+                    title=path.stem,
+                    section=path.stem,
+                    content=content,
+                    source_path=path.name,
+                    source_uri=source_uri,
+                    updated_at=updated_at,
+                    index_version=INDEX_SCHEMA_VERSION,
+                    content_type="narrative",
+                )
+            )
+            current_parts = []
+            current_length = 0
+
+        current_parts.append(paragraph)
+        current_length += len(paragraph) + (2 if len(current_parts) > 1 else 0)
+
+    if current_parts:
+        content = "\n\n".join(current_parts)
+        chunks.append(
+            ChunkDocument(
+                chunk_id=_build_chunk_id(doc_id, str(len(chunks)), content),
+                doc_id=doc_id,
+                title=path.stem,
+                section=path.stem,
+                content=content,
+                source_path=path.name,
+                source_uri=source_uri,
+                updated_at=updated_at,
+                index_version=INDEX_SCHEMA_VERSION,
+                content_type="narrative",
+            )
+        )
+    return chunks
+
+
+def _build_text_documents(path: Path, updated_at: str) -> list[ChunkDocument]:
+    if not path.exists():
+        return []
+    return _build_chunked_text_documents(path, updated_at, path.read_text(encoding="utf-8"))
+
+
+def _extract_docx_text(path: Path) -> str:
+    if DocxDocument is None:
+        raise ModuleNotFoundError("python-docx is required to index DOCX files. Install dependencies from requirements.txt.")
+    document = DocxDocument(str(path))
+    return "\n".join(paragraph.text for paragraph in document.paragraphs if paragraph.text.strip())
+
+
+def _build_docx_documents(path: Path, updated_at: str) -> list[ChunkDocument]:
+    if not path.exists():
+        return []
+    return _build_chunked_text_documents(path, updated_at, _extract_docx_text(path))
+
+
+def build_documents_from_source_path(path: Path) -> list[ChunkDocument]:
     updated_at = datetime.now(UTC).isoformat()
-    documents = _build_pdf_documents(COMPANY_PDF_PATH, updated_at)
-    _validate_documents(documents)
-    return documents
+    suffix = path.suffix.casefold()
+    if suffix == ".pdf":
+        documents = _build_pdf_documents(path, updated_at)
+        _validate_documents(documents)
+        return documents
+    if suffix in {".md", ".txt"}:
+        return _build_text_documents(path, updated_at)
+    if suffix == ".docx":
+        return _build_docx_documents(path, updated_at)
+    raise ValueError(f"Unsupported document type for ingestion: {path.suffix or '<no suffix>'}")
+
+
+def build_documents_from_path(path: Path) -> list[ChunkDocument]:
+    return build_documents_from_source_path(path)
+
+
+def build_documents() -> list[ChunkDocument]:
+    return build_documents_from_path(COMPANY_PDF_PATH)
 
 
 def _doc_id_exists(client: object, index_name: str, doc_id: str) -> bool:
@@ -1296,6 +1390,27 @@ def _ensure_index(client: object, index_name: str) -> None:
         client.indices.delete(index=index_name)
     except NotFoundError:
         pass
+    try:
+        client.indices.create(index=index_name, body={"settings": INDEX_SETTINGS, "mappings": INDEX_MAPPINGS})
+    except RequestError as exc:
+        if exc.error == "resource_already_exists_exception":
+            return
+        if exc.info and isinstance(exc.info, dict):
+            error = exc.info.get("error")
+            if isinstance(error, dict) and error.get("type") == "resource_already_exists_exception":
+                return
+        raise
+    except NotFoundError:
+        return
+
+
+def ensure_index_exists(client: object, index_name: str) -> None:
+    try:
+        if client.indices.exists(index=index_name):
+            return
+    except NotFoundError:
+        pass
+
     try:
         client.indices.create(index=index_name, body={"settings": INDEX_SETTINGS, "mappings": INDEX_MAPPINGS})
     except RequestError as exc:
@@ -1377,12 +1492,36 @@ def _index_with_retry(client: object, index_name: str, document: ChunkDocument, 
             time.sleep(attempt)
 
 
+def index_documents_for_paths(paths: Iterable[Path], index_name: str | None = None) -> int:
+    effective_index_name = index_name or os.getenv("OPENSEARCH_INDEX_NAME")
+    if not effective_index_name:
+        raise ValueError("OPENSEARCH_INDEX_NAME is not configured.")
+
+    client = _build_client()
+    ensure_index_exists(client, effective_index_name)
+
+    documents: list[ChunkDocument] = []
+    for path in paths:
+        documents.extend(build_documents_from_path(path))
+
+    if documents:
+        for doc_id in {document.doc_id for document in documents}:
+            _clear_doc_id(client, effective_index_name, doc_id)
+    for document in documents:
+        _index_with_retry(client, effective_index_name, document)
+    try:
+        client.indices.refresh(index=effective_index_name)
+    except NotFoundError:
+        pass
+    return len(documents)
+
+
 def index_documents() -> int:
     index_name = os.getenv("OPENSEARCH_INDEX_NAME")
     if not index_name:
         raise ValueError("OPENSEARCH_INDEX_NAME is not configured.")
     client = _build_client()
-    _ensure_index(client, index_name)
+    ensure_index_exists(client, index_name)
     documents = build_documents()
     if documents:
         _clear_target_doc_ids(client, index_name)

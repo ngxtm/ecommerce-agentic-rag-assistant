@@ -21,7 +21,14 @@ resource "aws_iam_role" "lambda" {
 }
 
 resource "aws_iam_role" "order_tool" {
-  name               = "${var.order_tool_function_name}-role"
+  name               = "${local.effective_order_tool_function}-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+
+  tags = local.base_tags
+}
+
+resource "aws_iam_role" "ingestion" {
+  name               = "${local.ingestion_lambda_function_name}-role"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
 
   tags = local.base_tags
@@ -148,7 +155,73 @@ data "aws_iam_policy_document" "order_tool_access" {
 }
 
 resource "aws_iam_role_policy" "order_tool_access" {
-  name   = "${var.order_tool_function_name}-access"
+  name   = "${local.effective_order_tool_function}-access"
   role   = aws_iam_role.order_tool.id
   policy = data.aws_iam_policy_document.order_tool_access.json
+}
+
+data "aws_iam_policy_document" "ingestion_access" {
+  statement {
+    sid    = "CloudWatchLogs"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
+    resources = ["${aws_cloudwatch_log_group.ingestion.arn}:*"]
+  }
+
+  statement {
+    sid    = "ReadDocsBucket"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:ListBucket",
+    ]
+    resources = [
+      local.docs_bucket_arn,
+      local.docs_prefix_arn,
+    ]
+  }
+
+  statement {
+    sid    = "IngestionStateAccess"
+    effect = "Allow"
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
+      "dynamodb:Query",
+    ]
+    resources = [aws_dynamodb_table.ingestion_state.arn]
+  }
+
+  statement {
+    sid    = "AOSSIngestionAccess"
+    effect = "Allow"
+    actions = [
+      "aoss:APIAccessAll",
+      "aoss:DashboardsAccessAll",
+    ]
+    resources = ["*"]
+  }
+
+  dynamic "statement" {
+    for_each = var.enable_xray ? [1] : []
+    content {
+      sid    = "XRayWrite"
+      effect = "Allow"
+      actions = [
+        "xray:PutTraceSegments",
+        "xray:PutTelemetryRecords",
+      ]
+      resources = ["*"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "ingestion_access" {
+  name   = "${local.ingestion_lambda_function_name}-access"
+  role   = aws_iam_role.ingestion.id
+  policy = data.aws_iam_policy_document.ingestion_access.json
 }

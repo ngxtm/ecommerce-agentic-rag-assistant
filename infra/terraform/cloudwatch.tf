@@ -17,7 +17,7 @@ resource "aws_cloudwatch_metric_alarm" "backend_lambda_errors" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "order_tool_lambda_errors" {
-  alarm_name          = "${var.order_tool_function_name}-errors"
+  alarm_name          = "${local.effective_order_tool_function}-errors"
   alarm_description   = "Alarm when the order tool Lambda reports errors."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
@@ -66,6 +66,24 @@ resource "aws_cloudwatch_metric_alarm" "api_gateway_5xx" {
   dimensions = {
     ApiId = aws_apigatewayv2_api.http.id
     Stage = aws_apigatewayv2_stage.default.name
+  }
+
+  tags = local.base_tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "ingestion_lambda_errors" {
+  alarm_name          = "${local.ingestion_lambda_function_name}-errors"
+  alarm_description   = "Alarm when the ingestion Lambda reports errors."
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+
+  dimensions = {
+    FunctionName = aws_lambda_function.ingestion.function_name
   }
 
   tags = local.base_tags

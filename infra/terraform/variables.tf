@@ -60,6 +60,24 @@ variable "lambda_artifact_path" {
   type        = string
 }
 
+variable "ingestion_lambda_handler" {
+  description = "Lambda handler path for the ingestion worker."
+  type        = string
+  default     = "app.backend.ingestion_handler.handler"
+}
+
+variable "ingestion_lambda_timeout_seconds" {
+  description = "Ingestion Lambda timeout in seconds."
+  type        = number
+  default     = 120
+}
+
+variable "ingestion_lambda_memory_mb" {
+  description = "Ingestion Lambda memory size in MB."
+  type        = number
+  default     = 1024
+}
+
 variable "lambda_log_retention_days" {
   description = "CloudWatch log retention in days for the Lambda log group."
   type        = number
@@ -80,11 +98,15 @@ variable "conversation_table_name" {
 variable "orders_table_name" {
   description = "DynamoDB table name for verified order lookups."
   type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "order_tool_function_name" {
   description = "Lambda function name for the order status tool."
   type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "order_tool_handler" {
@@ -123,20 +145,47 @@ variable "api_stage_name" {
 }
 
 variable "create_docs_bucket" {
-  description = "Create the docs bucket instead of referencing an existing one."
+  description = "Create the docs bucket as part of the Terraform-managed stack."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "docs_bucket_name" {
-  description = "Docs bucket name, either created by Terraform or reused if it already exists."
+  description = "Optional override for the docs bucket name. If unset, Terraform derives a globally unique name."
   type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "docs_s3_prefix" {
   description = "S3 prefix where document knowledge assets are stored."
   type        = string
   default     = "phase1-kb/"
+}
+
+variable "ingestion_state_table_name" {
+  description = "Optional override for the DynamoDB table that tracks document ingestion state."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "ingestion_state_ttl_days" {
+  description = "TTL in days for ingestion state records."
+  type        = number
+  default     = 30
+}
+
+variable "enable_docs_ingestion_trigger" {
+  description = "Enable S3 event notifications that invoke the ingestion Lambda when documents are uploaded."
+  type        = bool
+  default     = true
+}
+
+variable "docs_ingestion_suffixes" {
+  description = "Object suffixes that should trigger document ingestion."
+  type        = list(string)
+  default     = [".pdf", ".md", ".txt", ".docx"]
 }
 
 variable "opensearch_collection_name" {
@@ -194,6 +243,8 @@ variable "llm_api_key" {
 variable "llm_api_key_secret_name" {
   description = "Secrets Manager secret name that stores the LLM API key as a plain string."
   type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "llm_base_url" {

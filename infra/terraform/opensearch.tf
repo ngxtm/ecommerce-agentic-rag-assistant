@@ -81,7 +81,7 @@ resource "aws_opensearchserverless_access_policy" "knowledge" {
           ]
         }
       ]
-      Principal = concat([aws_iam_role.lambda.arn], var.opensearch_additional_principal_arns)
+      Principal = concat([aws_iam_role.lambda.arn, aws_iam_role.ingestion.arn], var.opensearch_additional_principal_arns)
     }
   ])
 }

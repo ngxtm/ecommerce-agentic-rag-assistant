@@ -33,6 +33,7 @@ from scripts.index_sample_docs import (
     _remove_toc_pages,
     _extract_risk_sections_from_text,
     _risk_factor_refiner,
+    build_documents_from_source_path,
     _validate_documents,
     _verify_doc_id_cleanup,
 )
@@ -458,3 +459,26 @@ def test_legacy_markdown_doc_ids_are_locked_for_scoped_cleanup() -> None:
         "refund_policy",
         "order_tracking_faq",
     )
+
+
+def test_build_documents_from_source_path_splits_text_into_multiple_chunks(tmp_path: Path) -> None:
+    path = tmp_path / "notes.txt"
+    path.write_text(
+        "Paragraph one about fulfillment.\n\n"
+        "Paragraph two about logistics.\n\n"
+        "Paragraph three about returns.\n\n"
+        "Paragraph four about support.",
+        encoding="utf-8",
+    )
+
+    documents = build_documents_from_source_path(path)
+
+    assert len(documents) >= 2
+    assert all(document.source_path == "notes.txt" for document in documents)
+
+
+def test_terraform_ingestion_notification_supports_multiple_suffixes() -> None:
+    ingestion_tf = Path("infra/terraform/ingestion.tf").read_text(encoding="utf-8")
+
+    assert 'for_each = toset(var.docs_ingestion_suffixes)' in ingestion_tf
+    assert 'filter_suffix       = lambda_function.value' in ingestion_tf

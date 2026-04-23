@@ -13,7 +13,6 @@ from app.backend.aws_auth import get_frozen_credentials
 from app.backend.config import get_aws_region
 from app.backend.llm_client import LLMClientError, generate_embedding
 
-TARGET_DOC_ID = "amazon_10k_2019"
 TARGET_INDEX_VERSION = "v2_parser_foundation"
 VECTOR_FIELD = "embedding"
 LEXICAL_CANDIDATE_MULTIPLIER = 3
@@ -219,7 +218,6 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
 
 def _build_doc_filter() -> list[dict[str, object]]:
     return [
-        {"term": {"doc_id.keyword": TARGET_DOC_ID}},
         {"term": {"index_version": TARGET_INDEX_VERSION}},
     ]
 

@@ -13,9 +13,9 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from app.backend.knowledge_base import (  # noqa: E402
+    _build_messages,
     _build_sources,
     _classify_question_intent,
-    _build_messages,
     _format_context,
     answer_question,
     generate_grounded_answer,
@@ -38,10 +38,16 @@ def main() -> None:
     print("MESSAGES:", json.dumps(_build_messages(question, _format_context(chunks)), indent=2))
     answer = generate_grounded_answer(question, chunks)
     print("ANSWER_FROM_CHUNKS:", answer)
-    print("PRODUCTION_OUTPUT:", json.dumps({
-        "answer": production_answer,
-        "sources": [source.model_dump() for source in production_sources],
-    }, indent=2))
+    print(
+        "PRODUCTION_OUTPUT:",
+        json.dumps(
+            {
+                "answer": production_answer,
+                "sources": [source.model_dump() for source in production_sources],
+            },
+            indent=2,
+        ),
+    )
 
 
 if __name__ == "__main__":

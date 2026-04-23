@@ -33,6 +33,16 @@ output "docs_bucket_name" {
   value       = local.docs_bucket_name
 }
 
+output "ingestion_lambda_function_name" {
+  description = "Ingestion Lambda function name."
+  value       = aws_lambda_function.ingestion.function_name
+}
+
+output "ingestion_state_table_name" {
+  description = "DynamoDB table name that tracks document ingestion state."
+  value       = aws_dynamodb_table.ingestion_state.name
+}
+
 output "aws_region" {
   description = "AWS region used by this deployment."
   value       = var.aws_region

@@ -1,8 +1,17 @@
 resource "aws_s3_bucket" "docs" {
   count  = var.create_docs_bucket ? 1 : 0
-  bucket = var.docs_bucket_name
+  bucket = local.effective_docs_bucket_name
 
   tags = local.base_tags
+}
+
+resource "aws_s3_bucket_versioning" "docs" {
+  count  = var.create_docs_bucket ? 1 : 0
+  bucket = aws_s3_bucket.docs[0].id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "docs" {

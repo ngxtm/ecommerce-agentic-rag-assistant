@@ -27,6 +27,7 @@ At a high level, a chat request enters the backend, gets classified by intent, a
 - externalized order lookup through a dedicated Lambda tool and Orders DynamoDB table
 - optional streaming responses for knowledge queries
 - Secrets Manager-backed LLM credential loading in cloud
+- S3-backed document source bucket and dedicated ingestion Lambda for future auto-indexing
 - CloudWatch alarms and X-Ray-ready tracing
 - AWS deployment path managed with Terraform
 
@@ -141,10 +142,6 @@ This is important for the current corpus because some filing sections are only p
 - Observability: `CloudWatch Logs`, `CloudWatch Alarms`, optional `X-Ray`
 - Infrastructure: `Terraform`
 
-### Deployed architecture note
-
-The repository originally targeted a Bedrock Knowledge Bases path, but the practical deployed path uses OpenSearch retrieval plus OpenAI-compatible generation. The README reflects the currently working implementation rather than the original target design.
-
 ## Repository Layout
 
 ```text
@@ -158,6 +155,7 @@ app/
     orchestrator.py       Main request routing logic
     order_lookup_client.py Lambda-invoked order tool client
     order_tool_handler.py Order tool Lambda handler
+    ingestion_handler.py  S3-driven ingestion Lambda handler
     order_workflow.py     Verification-driven order flow
     search_client.py      OpenSearch retrieval and reranking
     secrets.py            Secrets Manager loader with in-process cache
@@ -167,6 +165,8 @@ docs/                     Source documents and supporting docs
 infra/
   terraform/              Cloud infrastructure definitions
 scripts/
+  bootstrap_opensearch_index.py OpenSearch index bootstrap helper
+  debug_retrieval_response.py Retrieval debug helper
   index_sample_docs.py    Indexing pipeline for sample docs
   package_lambda.py       Lambda artifact packaging
 tests/                    Unit and integration-oriented tests
@@ -198,7 +198,7 @@ pip install -r requirements-frontend.txt
 
 Copy `.env.example` to `.env` and set the values needed for your environment.
 
-Minimum settings for the current retrieval path:
+Runtime settings for local retrieval and API development:
 
 ```env
 AWS_REGION=us-east-1
@@ -209,12 +209,19 @@ LLM_MODEL=cx/gpt-5.4
 LLM_TIMEOUT_SECONDS=30
 OPENSEARCH_COLLECTION_ENDPOINT=<aoss-endpoint>
 OPENSEARCH_INDEX_NAME=policy-faq-chunks
-DOCS_S3_BUCKET=<docs-bucket>
-DOCS_S3_PREFIX=
 ORDER_TOOL_FUNCTION_NAME=<order-tool-lambda-name>
 ```
 
-`DOCS_S3_PREFIX` is optional. Leave it empty when documents live at the bucket root.
+Optional S3 ingestion settings:
+
+```env
+DOCS_S3_BUCKET=<terraform-managed-docs-bucket>
+DOCS_S3_PREFIX=phase1-kb/
+INGESTION_STATE_TABLE_NAME=<terraform-managed-ingestion-state-table>
+INGESTION_PROCESSING_TIMEOUT_SECONDS=900
+```
+
+The runtime answer path reads from OpenSearch, not directly from S3. The docs bucket is kept in the deployed stack so uploads of `.pdf`, `.md`, `.txt`, and `.docx` files can trigger the dedicated ingestion Lambda and refresh the index automatically.
 
 For deployed AWS environments, the backend now reads the LLM API key from `LLM_API_KEY_SECRET_NAME` via Secrets Manager instead of storing the raw key in Lambda environment variables.
 
@@ -257,6 +264,8 @@ $env:AWS_PROFILE='minh-duykhanh'
 .venv\Scripts\python.exe scripts/index_sample_docs.py
 ```
 
+During deployment, Terraform also bootstraps the OpenSearch index mapping with `scripts/bootstrap_opensearch_index.py` so a fresh collection is ready before ingestion runs.
+
 ## Common Development Workflows
 
 ### Debug retrieval and answer generation
@@ -264,10 +273,10 @@ $env:AWS_PROFILE='minh-duykhanh'
 Use:
 
 ```powershell
-.venv\Scripts\python.exe scripts/debug_bedrock_response.py
+.venv\Scripts\python.exe scripts/debug_retrieval_response.py
 ```
 
-Despite the file name, this script now reflects the current retrieval and answer path. It prints:
+This script reflects the current OpenSearch retrieval and answer path. It prints:
 
 - detected intent
 - retrieved chunks
@@ -280,7 +289,7 @@ You can override the debug question with:
 
 ```powershell
 $env:DEBUG_QUESTION='Were there any legal proceedings?'
-.venv\Scripts\python.exe scripts/debug_bedrock_response.py
+.venv\Scripts\python.exe scripts/debug_retrieval_response.py
 ```
 
 ### Run the benchmark set used during retrieval tuning
@@ -334,11 +343,13 @@ This writes a capture file to:
 
 The backend is packaged as a Lambda artifact and deployed with Terraform. The deploy stack manages resources such as:
 
-- Lambda
+- Lambda for API, order tool, and document ingestion
 - API Gateway
-- DynamoDB
+- DynamoDB for conversation memory, orders, and ingestion state
 - OpenSearch Serverless
-- S3 and IAM resources needed by the deployed path
+- S3 docs bucket, bucket notifications, and IAM resources needed by the deployed path
+- Secrets Manager
+- CloudWatch log groups and alarms
 
 Use `docs/deployment.md` for the packaging, Terraform apply flow, post-deploy verification steps, reindexing, and troubleshooting notes.
 

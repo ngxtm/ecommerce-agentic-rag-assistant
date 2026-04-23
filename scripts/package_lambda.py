@@ -17,7 +17,9 @@ LAMBDA_REQUIREMENTS = (
     "mangum==0.19.0",
     "opensearch-py==2.7.1",
     "pydantic==2.11.3",
+    "pypdf==5.4.0",
     "python-dotenv==1.0.1",
+    "python-docx==1.1.2",
     "requests-aws4auth==1.3.1",
 )
 
@@ -56,6 +58,7 @@ def _install_dependencies(build_dir: Path, package_dir: Path) -> None:
 def _copy_sources(package_dir: Path) -> None:
     shutil.copytree(ROOT_DIR / "app", package_dir / "app", dirs_exist_ok=True)
     shutil.copytree(ROOT_DIR / "data" / "mock", package_dir / "data" / "mock", dirs_exist_ok=True)
+    shutil.copytree(ROOT_DIR / "scripts", package_dir / "scripts", dirs_exist_ok=True)
 
 
 def _create_archive(package_dir: Path) -> Path:
