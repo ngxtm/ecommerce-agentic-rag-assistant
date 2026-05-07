@@ -30,10 +30,14 @@ SECTION_OVERVIEW_RULES = (
     SectionOverviewRule(
         item="Item 1A. Risk Factors",
         aliases=(
+            "risk factor",
             "risk factors",
             "item 1a",
+            "item 1a risk factor",
             "item 1a risk factors",
+            "risk factor in item 1a",
             "risk factors in item 1a",
+            "risk factor described in item 1a",
             "risk factors described in item 1a",
         ),
     ),
