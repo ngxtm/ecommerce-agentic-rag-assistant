@@ -80,12 +80,15 @@ data "aws_iam_policy_document" "lambda_access" {
   }
 
   statement {
-    sid    = "ReadLLMApiKeySecret"
+    sid    = "ReadLLMSecrets"
     effect = "Allow"
     actions = [
       "secretsmanager:GetSecretValue",
     ]
-    resources = [aws_secretsmanager_secret.llm_api_key.arn]
+    resources = [
+      aws_secretsmanager_secret.llm_api_key.arn,
+      aws_secretsmanager_secret.llm_embedding_api_key.arn,
+    ]
   }
 
   # AOSS auth can still fail if the OpenSearch Serverless data access policy
@@ -194,6 +197,18 @@ data "aws_iam_policy_document" "ingestion_access" {
       "dynamodb:Query",
     ]
     resources = [aws_dynamodb_table.ingestion_state.arn]
+  }
+
+  statement {
+    sid    = "ReadLLMSecrets"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:GetSecretValue",
+    ]
+    resources = [
+      aws_secretsmanager_secret.llm_api_key.arn,
+      aws_secretsmanager_secret.llm_embedding_api_key.arn,
+    ]
   }
 
   statement {

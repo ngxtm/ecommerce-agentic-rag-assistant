@@ -17,3 +17,6 @@ def get_orders_table_name() -> str | None:
 
 def get_llm_api_key_secret_name() -> str | None:
     return os.getenv("LLM_API_KEY_SECRET_NAME")
+
+def get_llm_embedding_api_key_secret_name() -> str | None:
+    return os.getenv("LLM_EMBEDDING_API_KEY_SECRET_NAME") or os.getenv("LLM_API_KEY_SECRET_NAME")

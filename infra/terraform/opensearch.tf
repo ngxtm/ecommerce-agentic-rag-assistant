@@ -43,6 +43,13 @@ resource "aws_opensearchserverless_collection" "knowledge" {
   name = var.opensearch_collection_name
   type = var.opensearch_collection_type
 
+  lifecycle {
+    # Collection names are globally unique within the account/region and
+    # collection type changes require replacement, so create-before-destroy
+    # causes a name conflict during SEARCH -> VECTORSEARCH migration.
+    create_before_destroy = false
+  }
+
   depends_on = [
     aws_opensearchserverless_security_policy.encryption,
     aws_opensearchserverless_security_policy.network,

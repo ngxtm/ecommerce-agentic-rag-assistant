@@ -27,7 +27,7 @@ docs_ingestion_suffixes   = [".pdf", ".md", ".txt", ".docx"]
 ingestion_state_ttl_days  = 30
 
 opensearch_collection_name     = "agentic-commerce-knowledge-dev"
-opensearch_collection_type     = "SEARCH"
+opensearch_collection_type     = "VECTORSEARCH"
 opensearch_allow_public_access = true
 opensearch_additional_principal_arns = [
   "arn:aws:iam::123456789012:user/your-local-user",
@@ -41,4 +41,8 @@ llm_provider              = "openai_compatible"
 llm_api_key               = "set-in-local-terraform.tfvars"
 llm_base_url              = "https://r2lj67q.9router.com/v1"
 llm_model                 = "cx/gpt-5.4"
+llm_embedding_base_url    = "https://openrouter.ai/api/v1"
+llm_embedding_model       = "qwen/qwen3-embedding-8b"
+llm_embedding_dimensions  = 4096
+llm_embedding_api_key     = "set-openrouter-key-in-local-terraform.tfvars"
 llm_timeout_seconds       = 30

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import sys
@@ -11,16 +12,16 @@ from pathlib import Path
 from typing import Iterable
 
 from dotenv import load_dotenv
-from opensearchpy.exceptions import ConnectionTimeout, NotFoundError, RequestError
+from opensearchpy.exceptions import AuthorizationException, ConnectionTimeout, NotFoundError, RequestError
 
 try:
     from pypdf import PdfReader
-except ModuleNotFoundError:  # pragma: no cover - exercised indirectly when dependency is absent
+except (ModuleNotFoundError, ImportError):  # pragma: no cover - exercised indirectly when dependency is absent
     PdfReader = None
 
 try:
     from docx import Document as DocxDocument
-except ModuleNotFoundError:  # pragma: no cover - exercised indirectly when dependency is absent
+except (ModuleNotFoundError, ImportError):  # pragma: no cover - exercised indirectly when dependency is absent
     DocxDocument = None
 
 
@@ -35,6 +36,7 @@ LEGACY_MARKDOWN_DOC_IDS = (
 )
 MAX_CHUNK_CHARS = 800
 TEXT_CHUNK_PARAGRAPHS = 3
+EMBEDDING_BATCH_SIZE = 32
 PRIMARY_TABLE_SECTION = "Item 6. Selected Consolidated Financial Data"
 EXECUTIVE_OFFICERS_SECTION = "Executive Officers and Directors"
 ITEM_1A_SECTION = "Item 1A. Risk Factors"
@@ -143,7 +145,13 @@ EMBEDDED_HEADING_SPLITS = (
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from app.backend.knowledge_index_schema import INDEX_SCHEMA_VERSION
+from app.backend.knowledge_index_schema import (
+    INDEX_SCHEMA_VERSION,
+    build_vector_field_mapping,
+    get_embedding_dimensions_override,
+    resolve_embedding_dimensions,
+)
+from app.backend.llm_client import LLMClientError, generate_embeddings
 from app.backend.risk_headings import (
     extract_risk_sections_from_text as extract_risk_sections_from_text_shared,
     looks_like_risk_heading as looks_like_risk_heading_shared,
@@ -151,47 +159,53 @@ from app.backend.risk_headings import (
 )
 from app.backend.search_client import _build_client
 
+logger = logging.getLogger(__name__)
+
 
 INDEX_SETTINGS = {
     "index": {
         "number_of_shards": 1,
         "number_of_replicas": 1,
+        "knn": True,
     }
 }
 
-INDEX_MAPPINGS = {
-    "dynamic": True,
-    "properties": {
-        "chunk_id": {"type": "keyword"},
-        "doc_id": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
-        "title": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
-        "section": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
-        "content": {"type": "text"},
-        "source_path": {"type": "keyword"},
-        "source_uri": {"type": "keyword"},
-        "updated_at": {"type": "date"},
-        "index_version": {"type": "keyword"},
-        "part": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
-        "item": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
-        "subsection": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
-        "subsubsection": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
-        "page_start": {"type": "integer"},
-        "page_end": {"type": "integer"},
-        "filing_type": {"type": "keyword"},
-        "fiscal_year": {"type": "keyword"},
-        "company_name": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
-        "content_type": {"type": "keyword"},
-        "table_name": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
-        "metric": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
-        "year": {"type": "keyword"},
-        "value_raw": {"type": "keyword"},
-        "value_normalized": {"type": "float"},
-        "unit": {"type": "keyword"},
-        "entity_name": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
-        "entity_role": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
-        "embedding": {"type": "float"},
-    },
-}
+def _build_index_mappings(embedding_dimensions: int | None = None) -> dict[str, object]:
+    return {
+        "dynamic": True,
+        "properties": {
+            "chunk_id": {"type": "keyword"},
+            "doc_id": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+            "title": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+            "section": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+            "content": {"type": "text"},
+            "source_path": {"type": "keyword"},
+            "source_uri": {"type": "keyword"},
+            "updated_at": {"type": "date"},
+            "index_version": {"type": "keyword"},
+            "part": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+            "item": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+            "subsection": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+            "subsubsection": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+            "page_start": {"type": "integer"},
+            "page_end": {"type": "integer"},
+            "filing_type": {"type": "keyword"},
+            "fiscal_year": {"type": "keyword"},
+            "company_name": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+            "content_type": {"type": "keyword"},
+            "table_name": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+            "metric": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+            "year": {"type": "keyword"},
+            "value_raw": {"type": "keyword"},
+            "value_normalized": {"type": "float"},
+            "unit": {"type": "keyword"},
+            "entity_name": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+            "entity_role": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+            "embedding": build_vector_field_mapping(embedding_dimensions),
+        },
+    }
+
+INDEX_MAPPINGS = _build_index_mappings()
 
 
 @dataclass
@@ -265,7 +279,7 @@ class RefinedBlock:
     entity_role: str | None = None
 
 
-def _mapping_supports_doc_id_keyword(client: object, index_name: str) -> bool:
+def _mapping_supports_doc_id_keyword(client: object, index_name: str, embedding_dimensions: int | None = None) -> bool:
     try:
         mapping = client.indices.get_mapping(index=index_name)
     except NotFoundError:
@@ -275,15 +289,60 @@ def _mapping_supports_doc_id_keyword(client: object, index_name: str) -> bool:
     doc_id_mapping = properties.get("doc_id", {}) if isinstance(properties, dict) else {}
     entity_name_mapping = properties.get("entity_name", {}) if isinstance(properties, dict) else {}
     index_version_mapping = properties.get("index_version", {}) if isinstance(properties, dict) else {}
+    embedding_mapping = properties.get("embedding", {}) if isinstance(properties, dict) else {}
     fields = doc_id_mapping.get("fields", {}) if isinstance(doc_id_mapping, dict) else {}
     keyword_mapping = fields.get("keyword", {}) if isinstance(fields, dict) else {}
+    expected_dimensions = resolve_embedding_dimensions(embedding_dimensions)
     return (
         isinstance(keyword_mapping, dict)
         and keyword_mapping.get("type") == "keyword"
         and isinstance(entity_name_mapping, dict)
         and isinstance(index_version_mapping, dict)
         and index_version_mapping.get("type") == "keyword"
+        and isinstance(embedding_mapping, dict)
+        and embedding_mapping.get("type") == "knn_vector"
+        and int(embedding_mapping.get("dimension", 0) or 0) == expected_dimensions
     )
+
+def _batched_documents(documents: list[ChunkDocument], batch_size: int = EMBEDDING_BATCH_SIZE) -> Iterable[list[ChunkDocument]]:
+    for start in range(0, len(documents), batch_size):
+        yield documents[start : start + batch_size]
+
+def _apply_embeddings(documents: list[ChunkDocument]) -> int | None:
+    if not documents:
+        return None
+
+    configured_dimensions = get_embedding_dimensions_override()
+    generated_vectors: list[list[float]] = []
+    try:
+        for batch in _batched_documents(documents):
+            batch_vectors = generate_embeddings([document.content for document in batch])
+            if len(batch_vectors) != len(batch):
+                raise LLMClientError("Embedding batch size mismatch.")
+            generated_vectors.extend(batch_vectors)
+    except (ValueError, LLMClientError) as exc:
+        logger.warning("Embedding generation unavailable; continuing with lexical-only indexing. %s", exc)
+        return None
+
+    if len(generated_vectors) != len(documents):
+        logger.warning("Embedding generation returned incomplete vectors; continuing with lexical-only indexing.")
+        return None
+
+    detected_dimensions = len(generated_vectors[0]) if generated_vectors else None
+    if detected_dimensions is None:
+        return None
+    resolve_embedding_dimensions(detected_dimensions)
+    if configured_dimensions is not None and detected_dimensions != configured_dimensions:
+        raise RuntimeError(
+            f"Embedding dimension mismatch: provider returned {detected_dimensions}, but LLM_EMBEDDING_DIMENSIONS={configured_dimensions}."
+        )
+    if any(len(vector) != detected_dimensions for vector in generated_vectors):
+        raise RuntimeError("Embedding provider returned inconsistent vector dimensions across chunks.")
+
+    for document, vector in zip(documents, generated_vectors, strict=True):
+        document.embedding = vector
+
+    return detected_dimensions
 
 
 def _normalize_text_line(line: str) -> str:
@@ -1362,8 +1421,8 @@ def _doc_id_exists(client: object, index_name: str, doc_id: str) -> bool:
     return int(total.get("value", 0) if isinstance(total, dict) else total or 0) > 0
 
 
-def _ensure_index(client: object, index_name: str) -> None:
-    if _mapping_supports_doc_id_keyword(client, index_name):
+def _ensure_index(client: object, index_name: str, embedding_dimensions: int | None = None) -> None:
+    if _mapping_supports_doc_id_keyword(client, index_name, embedding_dimensions):
         return
     try:
         client.indices.delete(index=index_name)
@@ -1383,25 +1442,27 @@ def _ensure_index(client: object, index_name: str) -> None:
         return
 
 
-def ensure_index_exists(client: object, index_name: str) -> None:
-    try:
-        if client.indices.exists(index=index_name):
+def ensure_index_exists(
+    client: object,
+    index_name: str,
+    embedding_dimensions: int | None = None,
+    *,
+    max_attempts: int = 8,
+    propagation_retry_seconds: float = 3.0,
+) -> None:
+    for attempt in range(1, max_attempts + 1):
+        try:
+            _ensure_index(client, index_name, embedding_dimensions)
             return
-    except NotFoundError:
-        pass
-
-    try:
-        client.indices.create(index=index_name, body={"settings": INDEX_SETTINGS, "mappings": INDEX_MAPPINGS})
-    except RequestError as exc:
-        if exc.error == "resource_already_exists_exception":
-            return
-        if exc.info and isinstance(exc.info, dict):
-            error = exc.info.get("error")
-            if isinstance(error, dict) and error.get("type") == "resource_already_exists_exception":
-                return
-        raise
-    except NotFoundError:
-        return
+        except AuthorizationException:
+            if attempt == max_attempts:
+                raise
+            logger.warning(
+                "OpenSearch access not ready for index bootstrap yet; retrying index ensure (%s/%s).",
+                attempt,
+                max_attempts,
+            )
+            time.sleep(propagation_retry_seconds)
 
 
 def _delete_existing_doc_chunks(client: object, index_name: str, doc_id: str) -> None:
@@ -1463,7 +1524,9 @@ def _index_with_retry(client: object, index_name: str, document: ChunkDocument, 
     payload = asdict(document)
     for attempt in range(1, retries + 1):
         try:
-            client.index(index=index_name, id=document.chunk_id, body=payload, refresh=False)
+            # Keep chunk_id in the document body as the stable application identifier.
+            # AOSS vector collections reject custom OpenSearch document IDs on index/create.
+            client.index(index=index_name, body=payload, refresh=False)
             return
         except ConnectionTimeout:
             if attempt == retries:
@@ -1477,11 +1540,12 @@ def index_documents_for_paths(paths: Iterable[Path], index_name: str | None = No
         raise ValueError("OPENSEARCH_INDEX_NAME is not configured.")
 
     client = _build_client()
-    ensure_index_exists(client, effective_index_name)
 
     documents: list[ChunkDocument] = []
     for path in paths:
         documents.extend(build_documents_from_path(path))
+    embedding_dimensions = _apply_embeddings(documents)
+    ensure_index_exists(client, effective_index_name, embedding_dimensions)
 
     if documents:
         for doc_id in {document.doc_id for document in documents}:
@@ -1500,8 +1564,9 @@ def index_documents() -> int:
     if not index_name:
         raise ValueError("OPENSEARCH_INDEX_NAME is not configured.")
     client = _build_client()
-    ensure_index_exists(client, index_name)
     documents = build_documents()
+    embedding_dimensions = _apply_embeddings(documents)
+    ensure_index_exists(client, index_name, embedding_dimensions)
     if documents:
         _clear_target_doc_ids(client, index_name)
     for document in documents:

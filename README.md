@@ -206,6 +206,10 @@ LLM_PROVIDER=openai_compatible
 LLM_API_KEY=<external-llm-api-key>
 LLM_BASE_URL=https://r2lj67q.9router.com/v1
 LLM_MODEL=cx/gpt-5.4
+LLM_EMBEDDING_BASE_URL=https://openrouter.ai/api/v1
+LLM_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
+LLM_EMBEDDING_DIMENSIONS=4096
+LLM_EMBEDDING_API_KEY=<openrouter-embedding-key>
 LLM_TIMEOUT_SECONDS=30
 OPENSEARCH_COLLECTION_ENDPOINT=<aoss-endpoint>
 OPENSEARCH_INDEX_NAME=policy-faq-chunks
@@ -223,7 +227,7 @@ INGESTION_PROCESSING_TIMEOUT_SECONDS=900
 
 The runtime answer path reads from OpenSearch, not directly from S3. The docs bucket is kept in the deployed stack so uploads of `.pdf`, `.md`, `.txt`, and `.docx` files can trigger the dedicated ingestion Lambda and refresh the index automatically.
 
-For deployed AWS environments, the backend now reads the LLM API key from `LLM_API_KEY_SECRET_NAME` via Secrets Manager instead of storing the raw key in Lambda environment variables.
+For deployed AWS environments, the backend now reads the generation key from `LLM_API_KEY_SECRET_NAME` and the optional embedding-provider key from `LLM_EMBEDDING_API_KEY_SECRET_NAME` via Secrets Manager instead of storing raw keys in Lambda environment variables.
 
 ### 4. Run the backend
 

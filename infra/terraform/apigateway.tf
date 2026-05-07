@@ -49,7 +49,9 @@ resource "aws_api_gateway_integration" "health" {
   http_method             = aws_api_gateway_method.health.http_method
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
-  uri                     = aws_lambda_function.backend.invoke_arn
+  uri                     = local.backend_response_streaming_invoke_uri
+  response_transfer_mode  = "STREAM"
+  timeout_milliseconds    = min(var.lambda_timeout_seconds * 1000, 900000)
 }
 
 resource "aws_api_gateway_integration" "chat" {
@@ -58,7 +60,9 @@ resource "aws_api_gateway_integration" "chat" {
   http_method             = aws_api_gateway_method.chat.http_method
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
-  uri                     = aws_lambda_function.backend.invoke_arn
+  uri                     = local.backend_response_streaming_invoke_uri
+  response_transfer_mode  = "STREAM"
+  timeout_milliseconds    = min(var.lambda_timeout_seconds * 1000, 900000)
 }
 
 resource "aws_api_gateway_integration" "chat_stream" {

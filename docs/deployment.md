@@ -78,6 +78,10 @@ The main Terraform inputs for the backend deploy are:
 - `llm_api_key`
 - `llm_base_url`
 - `llm_model`
+- `llm_embedding_base_url`
+- `llm_embedding_model`
+- `llm_embedding_dimensions`
+- `llm_embedding_api_key`
 - `opensearch_collection_name`
 - `opensearch_index_name`
 - `docs_bucket_name`
@@ -87,15 +91,20 @@ Terraform variables are infrastructure inputs. Lambda environment variables are 
 Examples:
 
 - `TF_VAR_llm_api_key` -> `LLM_API_KEY`
+- `TF_VAR_llm_embedding_api_key` -> Secrets Manager secret -> `LLM_EMBEDDING_API_KEY_SECRET_NAME`
 - `TF_VAR_opensearch_collection_name` -> Terraform-managed collection -> `OPENSEARCH_COLLECTION_ENDPOINT`
 - `TF_VAR_docs_bucket_name` -> `DOCS_S3_BUCKET`
 
 ## Post-Deploy Verification
 
+The deployed REST API uses response-streaming-capable API Gateway integrations for all public routes so it matches the backend Lambda Web Adapter invoke mode. Verify raw HTTP status codes from API Gateway, not only app-level unit tests.
+
 ### Health endpoint
 
 ```powershell
-Invoke-RestMethod -Uri '<API_URL>/health'
+$response = Invoke-WebRequest -SkipHttpErrorCheck -Uri '<API_URL>/health' -Method Get
+$response.StatusCode
+$response.Content
 ```
 
 Expected response:
@@ -104,15 +113,20 @@ Expected response:
 {"status":"ok"}
 ```
 
+Expected transport status: `200`
+
 ### Grounded knowledge query
 
 ```powershell
 $body = @{ session_id='deploy-kb-001'; message="What does Amazon's business focus on?" } | ConvertTo-Json
-Invoke-RestMethod -Uri '<API_URL>/chat' -Method Post -ContentType 'application/json' -Body $body | ConvertTo-Json -Depth 8
+$response = Invoke-WebRequest -SkipHttpErrorCheck -Uri '<API_URL>/chat' -Method Post -ContentType 'application/json' -Body $body
+$response.StatusCode
+$response.Content
 ```
 
 Check that the response includes:
 
+- transport status `200`
 - `intent = KNOWLEDGE_QA`
 - a grounded answer
 - a short `sources` list

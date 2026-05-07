@@ -1,8 +1,9 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from opensearchpy.exceptions import NotFoundError, RequestError
+from opensearchpy.exceptions import AuthorizationException, NotFoundError, RequestError
 
+from app.backend.llm_client import LLMClientError
 from scripts.index_sample_docs import (
     AMAZON_10K_DOC_ID,
     EXECUTIVE_OFFICERS_SECTION,
@@ -10,8 +11,10 @@ from scripts.index_sample_docs import (
     ITEM_7_SECTION,
     LEGACY_MARKDOWN_DOC_IDS,
     PRIMARY_TABLE_SECTION,
+    ChunkDocument,
     DocumentBlock,
     NormalizedLine,
+    _apply_embeddings,
     _build_chunk_id,
     _build_document_skeleton,
     _build_pdf_documents,
@@ -21,6 +24,7 @@ from scripts.index_sample_docs import (
     _delete_existing_doc_chunks,
     _doc_id_exists,
     _ensure_index,
+    ensure_index_exists,
     _executive_refiner,
     _item8_refiner,
     _legal_proceedings_refiner,
@@ -32,6 +36,7 @@ from scripts.index_sample_docs import (
     _properties_refiner,
     _remove_toc_pages,
     _extract_risk_sections_from_text,
+    _index_with_retry,
     _risk_factor_refiner,
     build_documents_from_source_path,
     _validate_documents,
@@ -496,6 +501,59 @@ def test_delete_existing_doc_chunks_targets_fixed_doc_id() -> None:
     assert args["index"] == "policy-faq-chunks"
     assert args["body"]["query"]["term"]["doc_id.keyword"] == AMAZON_10K_DOC_ID
 
+@patch("scripts.index_sample_docs.generate_embeddings")
+def test_apply_embeddings_assigns_vectors_to_documents(mock_generate_embeddings: Mock) -> None:
+    documents = [
+        ChunkDocument(
+            chunk_id="chunk-1",
+            doc_id="amazon_10k_2019",
+            title="Amazon.com, Inc. Form 10-K",
+            section="Item 1. Business",
+            content="We serve consumers through our online and physical stores.",
+            source_path="Company-10k-18pages.pdf",
+            source_uri="docs/company/Company-10k-18pages.pdf",
+            updated_at="2026-05-07T00:00:00+00:00",
+        ),
+        ChunkDocument(
+            chunk_id="chunk-2",
+            doc_id="amazon_10k_2019",
+            title="Amazon.com, Inc. Form 10-K",
+            section="Item 2. Properties",
+            content="We operate offices, fulfillment centers, and data centers worldwide.",
+            source_path="Company-10k-18pages.pdf",
+            source_uri="docs/company/Company-10k-18pages.pdf",
+            updated_at="2026-05-07T00:00:00+00:00",
+        ),
+    ]
+    mock_generate_embeddings.return_value = [[0.1] * 8, [0.2] * 8]
+
+    embedding_dimensions = _apply_embeddings(documents)
+
+    assert embedding_dimensions == 8
+    assert documents[0].embedding == [0.1] * 8
+    assert documents[1].embedding == [0.2] * 8
+
+@patch("scripts.index_sample_docs.generate_embeddings")
+def test_apply_embeddings_returns_none_when_provider_fails(mock_generate_embeddings: Mock) -> None:
+    documents = [
+        ChunkDocument(
+            chunk_id="chunk-1",
+            doc_id="amazon_10k_2019",
+            title="Amazon.com, Inc. Form 10-K",
+            section="Item 1. Business",
+            content="We serve consumers through our online and physical stores.",
+            source_path="Company-10k-18pages.pdf",
+            source_uri="docs/company/Company-10k-18pages.pdf",
+            updated_at="2026-05-07T00:00:00+00:00",
+        )
+    ]
+    mock_generate_embeddings.side_effect = LLMClientError("provider unavailable")
+
+    embedding_dimensions = _apply_embeddings(documents)
+
+    assert embedding_dimensions is None
+    assert documents[0].embedding is None
+
 
 def test_ensure_index_creates_index_with_expected_mapping() -> None:
     client = Mock()
@@ -506,6 +564,8 @@ def test_ensure_index_creates_index_with_expected_mapping() -> None:
     client.indices.create.assert_called_once()
     args = client.indices.create.call_args.kwargs
     assert args["body"]["mappings"]["properties"]["entity_name"]["type"] == "text"
+    assert args["body"]["mappings"]["properties"]["embedding"]["type"] == "knn_vector"
+    assert args["body"]["settings"]["index"]["knn"] is True
 
 
 def test_ensure_index_ignores_existing_index_error() -> None:
@@ -520,6 +580,44 @@ def test_ensure_index_ignores_existing_index_error() -> None:
     _ensure_index(client, "policy-faq-chunks")
 
 
+@patch("scripts.index_sample_docs.time.sleep")
+def test_ensure_index_retries_authorization_until_access_policy_propagates(mock_sleep: Mock) -> None:
+    client = Mock()
+    client.indices.get_mapping.side_effect = [
+        NotFoundError(404, "index_not_found_exception", {}),
+        NotFoundError(404, "index_not_found_exception", {}),
+    ]
+    client.indices.create.side_effect = [
+        AuthorizationException(403, "security_exception", {"error": {"type": "authorization_exception"}}),
+        None,
+    ]
+
+    ensure_index_exists(client, "policy-faq-chunks", max_attempts=2, propagation_retry_seconds=0)
+
+    assert client.indices.create.call_count == 2
+    mock_sleep.assert_called_once_with(0)
+
+
+def test_index_with_retry_uses_app_level_chunk_id_field_not_opensearch_document_id() -> None:
+    client = Mock()
+    document = ChunkDocument(
+        chunk_id="chunk-1",
+        doc_id="amazon_10k_2019",
+        title="Amazon.com, Inc. Form 10-K",
+        section="Item 1. Business",
+        content="We serve consumers through our online and physical stores.",
+        source_path="Company-10k-18pages.pdf",
+        source_uri="docs/company/Company-10k-18pages.pdf",
+        updated_at="2026-05-07T00:00:00+00:00",
+    )
+
+    _index_with_retry(client, "policy-faq-chunks", document)
+
+    client.index.assert_called_once()
+    assert "id" not in client.index.call_args.kwargs
+    assert client.index.call_args.kwargs["body"]["chunk_id"] == "chunk-1"
+
+
 def test_mapping_supports_doc_id_keyword_returns_true_for_expected_mapping() -> None:
     client = Mock()
     client.indices.get_mapping.return_value = {
@@ -529,12 +627,30 @@ def test_mapping_supports_doc_id_keyword_returns_true_for_expected_mapping() -> 
                     "doc_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
                     "entity_name": {"type": "text"},
                     "index_version": {"type": "keyword"},
+                    "embedding": {"type": "knn_vector", "dimension": 1536},
                 }
             }
         }
     }
 
-    assert _mapping_supports_doc_id_keyword(client, "policy-faq-chunks") is True
+    assert _mapping_supports_doc_id_keyword(client, "policy-faq-chunks", 1536) is True
+
+def test_mapping_supports_doc_id_keyword_returns_false_for_legacy_float_embedding_mapping() -> None:
+    client = Mock()
+    client.indices.get_mapping.return_value = {
+        "policy-faq-chunks": {
+            "mappings": {
+                "properties": {
+                    "doc_id": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+                    "entity_name": {"type": "text"},
+                    "index_version": {"type": "keyword"},
+                    "embedding": {"type": "float"},
+                }
+            }
+        }
+    }
+
+    assert _mapping_supports_doc_id_keyword(client, "policy-faq-chunks", 1536) is False
 
 
 def test_doc_id_exists_returns_false_when_index_missing() -> None:

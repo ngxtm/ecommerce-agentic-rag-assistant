@@ -28,6 +28,11 @@ output "llm_api_key_secret_name" {
   value       = aws_secretsmanager_secret.llm_api_key.name
 }
 
+output "llm_embedding_api_key_secret_name" {
+  description = "Secrets Manager secret name used for the embedding provider API key."
+  value       = aws_secretsmanager_secret.llm_embedding_api_key.name
+}
+
 output "docs_bucket_name" {
   description = "S3 docs bucket name used by the deployed backend."
   value       = local.docs_bucket_name

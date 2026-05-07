@@ -213,7 +213,7 @@ variable "opensearch_collection_name" {
 variable "opensearch_collection_type" {
   description = "OpenSearch Serverless collection type."
   type        = string
-  default     = "SEARCH"
+  default     = "VECTORSEARCH"
 
   validation {
     condition     = contains(["SEARCH", "TIMESERIES", "VECTORSEARCH"], var.opensearch_collection_type)
@@ -269,9 +269,49 @@ variable "llm_base_url" {
   type        = string
 }
 
+variable "llm_embedding_base_url" {
+  description = "Optional base URL for the OpenAI-compatible embedding endpoint. Falls back to llm_base_url when null."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "llm_model" {
   description = "Model identifier for grounded generation."
   type        = string
+}
+
+variable "llm_embedding_model" {
+  description = "Optional model identifier for embedding generation. Falls back to llm_model when null."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "llm_embedding_dimensions" {
+  description = "Expected embedding vector dimensions used for OpenSearch k-NN mapping."
+  type        = number
+  default     = 1536
+
+  validation {
+    condition     = var.llm_embedding_dimensions >= 8
+    error_message = "llm_embedding_dimensions must be at least 8."
+  }
+}
+
+variable "llm_embedding_api_key" {
+  description = "Optional API key stored in AWS Secrets Manager for the embedding provider. Falls back to llm_api_key when null."
+  type        = string
+  sensitive   = true
+  default     = null
+  nullable    = true
+}
+
+variable "llm_embedding_api_key_secret_name" {
+  description = "Optional Secrets Manager secret name that stores the embedding provider API key as a plain string."
+  type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "llm_timeout_seconds" {

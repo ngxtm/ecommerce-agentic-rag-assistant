@@ -2,12 +2,17 @@ from unittest.mock import Mock, patch
 
 from app.backend.knowledge_index_schema import INDEX_SCHEMA_VERSION
 from app.backend.knowledge_base import _rerank_chunks
+from app.backend.llm_client import LLMClientError
 from app.backend.search_client import (
     RetrievedChunk,
     _build_lexical_query,
+    _build_vector_query,
     _classify_query_intent,
+    _get_retrieval_profile,
     _merge_candidates,
+    _run_vector_search,
     _search_with_query_variants,
+    _should_run_vector_search,
     rewrite_search_query,
     search_chunks,
 )
@@ -95,6 +100,43 @@ def test_build_lexical_query_filters_by_shared_index_schema_version() -> None:
     query = _build_lexical_query("What does Amazon's business focus on?", top_k=4)
 
     assert {"term": {"index_version": INDEX_SCHEMA_VERSION}} in query["query"]["bool"]["filter"]
+
+def test_build_vector_query_uses_knn_and_item_filter_for_explicit_item_query() -> None:
+    query = _build_vector_query([0.1] * 8, top_k=4, question="Item 2 properties", intent="narrative_explainer")
+    knn_query = query["query"]["knn"]["embedding"]
+
+    assert knn_query["k"] == 12
+    assert {"term": {"index_version": INDEX_SCHEMA_VERSION}} in knn_query["filter"]["bool"]["filter"]
+    assert {"term": {"item.keyword": "Item 2. Properties"}} in knn_query["filter"]["bool"]["filter"]
+
+def test_get_retrieval_profile_keeps_heading_lookup_lexical_only() -> None:
+    profile = _get_retrieval_profile("Can you tell me more about We Face Intense Competition")
+
+    assert profile.intent == "heading_lookup"
+    assert profile.lexical_weight == 1.0
+    assert profile.vector_weight == 0.0
+
+def test_should_run_vector_search_skips_strong_entity_lookup_match() -> None:
+    profile = _get_retrieval_profile("Who is Andrew R. Jassy?")
+    lexical_chunks = [
+        RetrievedChunk(
+            chunk_id="exec-row",
+            doc_id="amazon_10k_2019",
+            title="Amazon.com, Inc. Form 10-K",
+            section="Executive Officers and Directors",
+            content="Andrew R. Jassy, age 52, serves as CEO Amazon Web Services.",
+            source_path="Company-10k-18pages.pdf",
+            source_uri="docs/company/Company-10k-18pages.pdf",
+            score=4.2,
+            lexical_score=4.2,
+            vector_score=0.0,
+            content_type="profile_row",
+            entity_name="Andrew R. Jassy",
+            entity_role="CEO Amazon Web Services",
+        )
+    ]
+
+    assert _should_run_vector_search("Who is Andrew R. Jassy?", lexical_chunks, profile) is False
 
 
 def test_build_lexical_query_routes_explicit_item1a_summary_to_heading_lookup() -> None:
@@ -212,6 +254,49 @@ def test_build_lexical_query_adds_item5_boost_for_stock_query() -> None:
         == "Item 5. Market for the Registrant's Common Stock, Related Shareholder Matters, and Issuer Purchases of Equity Securities"
         for clause in should_clauses
     )
+
+@patch("app.backend.search_client.generate_embedding")
+def test_run_vector_search_uses_native_knn_hits(mock_generate_embedding: Mock) -> None:
+    mock_generate_embedding.return_value = [0.1] * 8
+    client = Mock()
+    client.search.return_value = {
+        "hits": {
+            "hits": [
+                {
+                    "_id": "chunk-1",
+                    "_score": 0.87,
+                    "_source": {
+                        "chunk_id": "chunk-1",
+                        "doc_id": "amazon_10k_2019",
+                        "title": "Amazon.com, Inc. Form 10-K",
+                        "section": "Item 1. Business",
+                        "content": "We serve consumers through our online and physical stores.",
+                        "source_path": "Company-10k-18pages.pdf",
+                        "source_uri": "docs/company/Company-10k-18pages.pdf",
+                        "content_type": "narrative",
+                    },
+                }
+            ]
+        }
+    }
+
+    profile = _get_retrieval_profile("What does Amazon's business focus on?")
+    chunks = _run_vector_search(client, "policy-faq-chunks", "What does Amazon's business focus on?", 4, profile, [])
+
+    assert len(chunks) == 1
+    assert chunks[0].vector_score == 0.87
+    assert "knn" in client.search.call_args.kwargs["body"]["query"]
+
+@patch("app.backend.search_client.generate_embedding")
+def test_run_vector_search_falls_back_when_embedding_generation_fails(mock_generate_embedding: Mock) -> None:
+    mock_generate_embedding.side_effect = LLMClientError("embedding failed")
+    client = Mock()
+
+    profile = _get_retrieval_profile("What does Amazon's business focus on?")
+    chunks = _run_vector_search(client, "policy-faq-chunks", "What does Amazon's business focus on?", 4, profile, [])
+
+    assert chunks == []
+    client.search.assert_not_called()
 
 
 def test_merge_candidates_keeps_exact_lexical_match_above_semantic_neighbor() -> None:
