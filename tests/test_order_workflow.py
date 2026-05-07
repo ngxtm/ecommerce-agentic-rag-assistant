@@ -1,6 +1,13 @@
 from unittest.mock import patch
 
-from app.backend.models import NextAction, SessionState
+from app.backend.models import (
+    CollectedFields,
+    NextAction,
+    SessionState,
+    VerificationState,
+    VerificationStatus,
+    WorkflowState,
+)
 from app.backend.order_workflow import handle_order_workflow
 
 
@@ -17,6 +24,45 @@ def test_order_workflow_rejects_invalid_dob_format() -> None:
     assert response.next_action is NextAction.ASK_USER
     assert "date of birth in DD-MM-YYYY format" in response.answer
     assert "date_of_birth" in state.verification_state.missing_fields
+
+def test_order_workflow_resets_stale_verification_state_for_new_order_request() -> None:
+    stale_state = SessionState(
+        workflow_state=WorkflowState.ORDER_COMPLETED,
+        verification_state=VerificationState(
+            status=VerificationStatus.COLLECTING,
+            missing_fields=["date_of_birth", "ssn_last4"],
+            verified_fields=["full_name"],
+        ),
+        collected_fields=CollectedFields(full_name="John Doe"),
+        verified_customer_ref="CUSTOMER#john doe#1990-06-15#1234",
+    )
+
+    response, state = handle_order_workflow("Where is my order?", stale_state)
+
+    assert response.next_action is NextAction.ASK_USER
+    assert state.collected_fields.full_name is None
+    assert state.verified_customer_ref is None
+    assert state.verification_state.missing_fields == ["full_name", "date_of_birth", "ssn_last4"]
+    assert state.verification_state.verified_fields == []
+
+def test_order_workflow_resets_before_extracting_new_fields_from_restart_message() -> None:
+    stale_state = SessionState(
+        workflow_state=WorkflowState.ORDER_COMPLETED,
+        verification_state=VerificationState(
+            status=VerificationStatus.COLLECTING,
+            missing_fields=["date_of_birth", "ssn_last4"],
+            verified_fields=["full_name"],
+        ),
+        collected_fields=CollectedFields(full_name="John Doe"),
+    )
+
+    response, state = handle_order_workflow("Where is my order? My name is Jane Doe", stale_state)
+
+    assert response.next_action is NextAction.ASK_USER
+    assert state.collected_fields.full_name == "Jane Doe"
+    assert state.verification_state.missing_fields == ["date_of_birth", "ssn_last4"]
+    assert state.verification_state.verified_fields == ["full_name"]
+
 @patch("app.backend.order_workflow.lookup_verified_order")
 def test_order_workflow_returns_shipment_result_after_verification(mock_lookup_verified_order) -> None:
     mock_lookup_verified_order.return_value = {

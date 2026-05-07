@@ -55,3 +55,19 @@ def test_orchestrator_continues_order_flow_without_repeating_keywords(mock_looku
     assert stored_state.collected_fields.ssn_last4 == "1234"
     assert stored_state.recent_messages[-1].tool_name == "order_status_tool"
     assert stored_state.recent_messages[-1].tool_result_summary == "order_found"
+
+def test_orchestrator_restarts_order_flow_when_user_asks_new_order_question() -> None:
+    session_id = "order-session-restart"
+
+    first = handle_chat(ChatRequest(session_id=session_id, message="Where is my order?"))
+    second = handle_chat(ChatRequest(session_id=session_id, message="John Doe"))
+    restarted = handle_chat(ChatRequest(session_id=session_id, message="Where is my order?"))
+
+    assert first.verification_state.missing_fields == ["full_name", "date_of_birth", "ssn_last4"]
+    assert second.verification_state.missing_fields == ["date_of_birth", "ssn_last4"]
+    assert restarted.intent.value == "ORDER_STATUS"
+    assert restarted.next_action.value == "ASK_USER"
+    assert restarted.verification_state.missing_fields == ["full_name", "date_of_birth", "ssn_last4"]
+
+    stored_state = session_store.load(session_id)
+    assert stored_state.collected_fields.full_name is None

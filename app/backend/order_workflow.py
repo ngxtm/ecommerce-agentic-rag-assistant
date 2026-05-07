@@ -22,6 +22,17 @@ FIELD_PROMPTS = {
     "date_of_birth": "Please share your date of birth in DD-MM-YYYY format.",
     "ssn_last4": "Please share the last 4 digits of your SSN.",
 }
+ORDER_FLOW_RESTART_PATTERNS = (
+    r"\bwhere(?: s| is)? my order\b",
+    r"\bwhere(?: s| is)? my package\b",
+    r"\btrack(?:ing)?(?: my)? order\b",
+    r"\btrack(?:ing)?(?: my)? package\b",
+    r"\bcheck(?:ing)?(?: my)? order(?: status)?\b",
+    r"\bcheck(?:ing)?(?: my)? shipment(?: status)?\b",
+    r"\border status\b",
+    r"\bshipment status\b",
+    r"\bdelivery status\b",
+)
 
 
 def _extract_full_name(message: str) -> str | None:
@@ -53,6 +64,27 @@ def _extract_ssn_last4(message: str) -> str | None:
     match = re.search(r"(?:ssn|last\s*4|last\s*four)[^\d]*(\d{4})", message, flags=re.IGNORECASE)
     return match.group(1) if match else None
 
+
+def _has_existing_verification_context(session_state: SessionState) -> bool:
+    return session_state.verified_customer_ref is not None or any(
+        getattr(session_state.collected_fields, field) is not None for field in FIELD_ORDER
+    )
+
+def _normalize_order_flow_message(message: str) -> str:
+    normalized = re.sub(r"[^a-z0-9\s]", " ", message.casefold())
+    return re.sub(r"\s+", " ", normalized).strip()
+
+def _is_new_order_status_request(message: str) -> bool:
+    normalized = _normalize_order_flow_message(message)
+    return any(re.search(pattern, normalized) for pattern in ORDER_FLOW_RESTART_PATTERNS)
+
+def _should_restart_order_collection(message: str, session_state: SessionState) -> bool:
+    return _has_existing_verification_context(session_state) and _is_new_order_status_request(message)
+
+def _reset_order_verification_state(session_state: SessionState) -> None:
+    session_state.collected_fields = CollectedFields()
+    session_state.verification_state = VerificationState()
+    session_state.verified_customer_ref = None
 
 def _update_verification_state(collected_fields: CollectedFields) -> VerificationState:
     missing_fields = [field for field in FIELD_ORDER if getattr(collected_fields, field) is None]
@@ -109,6 +141,10 @@ def _apply_extracted_fields(message: str, collected_fields: CollectedFields) -> 
 def handle_order_workflow(message: str, session_state: SessionState) -> tuple[ChatResponse, SessionState]:
     updated_state = session_state.model_copy(deep=True)
     updated_state.current_intent = Intent.ORDER_STATUS
+
+    if _should_restart_order_collection(message, updated_state):
+        _reset_order_verification_state(updated_state)
+
     updated_state.workflow_state = WorkflowState.COLLECTING_ORDER_VERIFICATION
 
     collected_fields, validation_errors = _apply_extracted_fields(message, updated_state.collected_fields)
