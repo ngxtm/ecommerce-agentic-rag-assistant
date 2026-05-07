@@ -12,6 +12,8 @@ resource "aws_lambda_function" "backend" {
   handler       = var.lambda_handler
   timeout       = var.lambda_timeout_seconds
   memory_size   = var.lambda_memory_mb
+  architectures = [var.lambda_architecture]
+  layers        = [local.lambda_web_adapter_layer_arn]
 
   filename         = var.lambda_artifact_path
   source_code_hash = filebase64sha256(var.lambda_artifact_path)
@@ -43,6 +45,7 @@ resource "aws_lambda_function" "order_tool" {
   handler       = var.order_tool_handler
   timeout       = var.order_tool_timeout_seconds
   memory_size   = var.order_tool_memory_mb
+  architectures = [var.lambda_architecture]
 
   filename         = var.lambda_artifact_path
   source_code_hash = filebase64sha256(var.lambda_artifact_path)
@@ -74,6 +77,7 @@ resource "aws_lambda_function" "ingestion" {
   handler       = var.ingestion_lambda_handler
   timeout       = var.ingestion_lambda_timeout_seconds
   memory_size   = var.ingestion_lambda_memory_mb
+  architectures = [var.lambda_architecture]
 
   filename         = var.lambda_artifact_path
   source_code_hash = filebase64sha256(var.lambda_artifact_path)

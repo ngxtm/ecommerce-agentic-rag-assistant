@@ -3,21 +3,23 @@ environment               = "dev"
 aws_region                = "us-east-1"
 
 lambda_function_name      = "agentic-commerce-backend-dev"
-lambda_handler            = "app.backend.handler.handler"
+lambda_handler            = "run.sh"
 lambda_runtime            = "python3.12"
-lambda_timeout_seconds    = 30
-lambda_memory_mb          = 512
+lambda_timeout_seconds    = 60
+lambda_memory_mb          = 1024
 ingestion_lambda_timeout_seconds = 120
 ingestion_lambda_memory_mb       = 1024
 lambda_artifact_path      = "../../artifacts/backend-lambda.zip"
 lambda_log_retention_days = 14
 enable_xray               = true
+lambda_architecture       = "x86_64"
+lambda_web_adapter_layer_version = 25
 
 conversation_table_name   = "agentic-commerce-conversation-dev"
 memory_ttl_days           = 7
 
 api_name                  = "agentic-commerce-api-dev"
-api_stage_name            = "$default"
+api_stage_name            = "prod"
 
 docs_s3_prefix            = "phase1-kb/"
 enable_docs_ingestion_trigger = true

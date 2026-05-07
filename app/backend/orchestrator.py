@@ -4,7 +4,7 @@ import time
 from collections.abc import Iterator
 
 from app.backend.classifier import classify_intent
-from app.backend.knowledge_base import CONSERVATIVE_FALLBACK, answer_question, stream_answer_question
+from app.backend.knowledge_base import CONSERVATIVE_FALLBACK, answer_question, build_answer_stream, prepare_knowledge_stream
 from app.backend.memory_store import session_store
 from app.backend.observability import build_log_event, contains_possible_pii
 from app.backend.models import ChatRequest, ChatResponse, Intent, NextAction, WorkflowState
@@ -37,6 +37,14 @@ def _extract_source_ids(sources: list) -> list[str]:
 def _sse_event(event_type: str, data: dict[str, object]) -> str:
     payload = {"event_version": EVENT_VERSION, **data}
     return f"event: {event_type}\ndata: {json.dumps(payload)}\n\n"
+
+
+def _stream_status_message(mode: str) -> str:
+    if mode == "llm_stream":
+        return "Generating grounded answer"
+    if mode == "deterministic_stream":
+        return "Composing grounded answer"
+    return "Composing fallback answer"
 
 
 def _persist_knowledge_response(session_id: str, answer: str, sources: list, session_state) -> None:
@@ -263,20 +271,46 @@ def stream_chat(request: ChatRequest, request_id: str | None = None) -> Iterator
     )
 
     full_answer_parts: list[str] = []
+    prepared = None
+    retrieval_ms: float | None = None
+    generation_ms: float | None = None
     try:
-        answer_stream, sources = stream_answer_question(request.message)
+        retrieval_started_at = time.perf_counter()
+        yield _sse_event(
+            "status",
+            {
+                "phase": "retrieving",
+                "message": "Searching grounded sources",
+            },
+        )
+        prepared = prepare_knowledge_stream(request.message)
+        retrieval_ms = round((time.perf_counter() - retrieval_started_at) * 1000, 2)
+
+        yield _sse_event(
+            "status",
+            {
+                "phase": "generating",
+                "message": _stream_status_message(prepared.mode),
+            },
+        )
+        generation_started_at = time.perf_counter()
+        answer_stream = build_answer_stream(prepared)
         for chunk in answer_stream:
             if not chunk:
                 continue
             full_answer_parts.append(chunk)
             yield _sse_event("delta", {"delta": chunk})
+        generation_ms = round((time.perf_counter() - generation_started_at) * 1000, 2)
         full_answer = "".join(full_answer_parts).strip() or CONSERVATIVE_FALLBACK
-        _persist_knowledge_response(request.session_id, full_answer, sources, session_state)
+        _persist_knowledge_response(request.session_id, full_answer, prepared.sources, session_state)
         yield _sse_event(
             "final",
             {
                 "full_answer": full_answer,
-                "sources": [source.model_dump() if hasattr(source, "model_dump") else source for source in sources],
+                "sources": [source.model_dump() if hasattr(source, "model_dump") else source for source in prepared.sources],
+                "mode": prepared.mode,
+                "retrieval_ms": retrieval_ms,
+                "generation_ms": generation_ms,
                 "session_update_status": "committed",
             },
         )
@@ -302,6 +336,9 @@ def stream_chat(request: ChatRequest, request_id: str | None = None) -> Iterator
                     {
                         "full_answer": fallback_answer,
                         "sources": [source.model_dump() if hasattr(source, "model_dump") else source for source in fallback_sources],
+                        "mode": "fallback_stream",
+                        "retrieval_ms": retrieval_ms,
+                        "generation_ms": generation_ms,
                         "session_update_status": "committed",
                         "stream_recovery": "blocking_fallback",
                     },

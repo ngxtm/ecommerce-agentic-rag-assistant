@@ -1,15 +1,18 @@
 locals {
-  default_orders_table_name      = "agentic-commerce-orders-${var.environment}"
-  default_order_tool_function    = "agentic-commerce-order-tool-${var.environment}"
-  default_llm_api_key_secret     = "agentic-commerce-llm-api-key-${var.environment}"
-  default_docs_bucket_name       = lower("agentic-commerce-docs-${var.environment}-${var.aws_region}-${data.aws_caller_identity.current.account_id}")
-  default_ingestion_state_table  = "agentic-commerce-ingestion-state-${var.environment}"
-  ingestion_lambda_function_name = "agentic-commerce-ingestion-${var.environment}"
-  effective_orders_table_name    = coalesce(var.orders_table_name, local.default_orders_table_name)
-  effective_order_tool_function  = coalesce(var.order_tool_function_name, local.default_order_tool_function)
-  effective_llm_api_key_secret   = coalesce(var.llm_api_key_secret_name, local.default_llm_api_key_secret)
-  effective_docs_bucket_name     = coalesce(var.docs_bucket_name, local.default_docs_bucket_name)
-  effective_ingestion_state_table = coalesce(var.ingestion_state_table_name, local.default_ingestion_state_table)
+  default_orders_table_name             = "agentic-commerce-orders-${var.environment}"
+  default_order_tool_function           = "agentic-commerce-order-tool-${var.environment}"
+  default_llm_api_key_secret            = "agentic-commerce-llm-api-key-${var.environment}"
+  default_docs_bucket_name              = lower("agentic-commerce-docs-${var.environment}-${var.aws_region}-${data.aws_caller_identity.current.account_id}")
+  default_ingestion_state_table         = "agentic-commerce-ingestion-state-${var.environment}"
+  ingestion_lambda_function_name        = "agentic-commerce-ingestion-${var.environment}"
+  effective_orders_table_name           = coalesce(var.orders_table_name, local.default_orders_table_name)
+  effective_order_tool_function         = coalesce(var.order_tool_function_name, local.default_order_tool_function)
+  effective_llm_api_key_secret          = coalesce(var.llm_api_key_secret_name, local.default_llm_api_key_secret)
+  effective_docs_bucket_name            = coalesce(var.docs_bucket_name, local.default_docs_bucket_name)
+  effective_ingestion_state_table       = coalesce(var.ingestion_state_table_name, local.default_ingestion_state_table)
+  lambda_web_adapter_layer_name         = var.lambda_architecture == "arm64" ? "LambdaAdapterLayerArm64" : "LambdaAdapterLayerX86"
+  lambda_web_adapter_layer_arn          = "arn:aws:lambda:${var.aws_region}:753240598075:layer:${local.lambda_web_adapter_layer_name}:${var.lambda_web_adapter_layer_version}"
+  backend_response_streaming_invoke_uri = "arn:${data.aws_partition.current.partition}:apigateway:${var.aws_region}:lambda:path/2021-11-15/functions/${aws_lambda_function.backend.arn}/response-streaming-invocations"
 
   base_tags = merge(
     {
@@ -38,6 +41,10 @@ locals {
     LLM_BASE_URL                   = var.llm_base_url
     LLM_MODEL                      = var.llm_model
     LLM_TIMEOUT_SECONDS            = tostring(var.llm_timeout_seconds)
+    PORT                           = "8080"
+    AWS_LAMBDA_EXEC_WRAPPER        = "/opt/bootstrap"
+    AWS_LWA_INVOKE_MODE            = "response_stream"
+    AWS_LWA_READINESS_CHECK_PATH   = "/health"
   }
 
   order_tool_environment = {

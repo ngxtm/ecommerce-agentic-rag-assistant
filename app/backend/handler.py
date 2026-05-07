@@ -1,9 +1,4 @@
-from mangum import Mangum
-
 from app.backend.main import app
-
-
-handler = Mangum(app)
 
 
 def get_app():

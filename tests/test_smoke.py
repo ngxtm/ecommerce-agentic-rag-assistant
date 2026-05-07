@@ -1,5 +1,5 @@
 import json
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
@@ -96,13 +96,14 @@ def test_chat_returns_numeric_knowledge_response_with_source_metadata(mock_answe
 @patch("app.backend.orchestrator.session_store.save")
 @patch("app.backend.orchestrator.session_store.append_message")
 @patch("app.backend.orchestrator.session_store.load")
-@patch("app.backend.orchestrator.stream_answer_question")
-def test_chat_stream_returns_sse_delta_and_final_events(mock_stream_answer_question, mock_load, mock_append, mock_save) -> None:
+@patch("app.backend.orchestrator.build_answer_stream")
+@patch("app.backend.orchestrator.prepare_knowledge_stream")
+def test_chat_stream_returns_sse_delta_and_final_events(mock_prepare_stream, mock_build_stream, mock_load, mock_append, mock_save) -> None:
     mock_load.return_value = _session_state()
     mock_append.return_value = _session_state()
-    mock_stream_answer_question.return_value = (
-        iter(["Net sales ", "were 280,522 in 2019."]),
-        [
+    mock_prepare_stream.return_value = Mock(
+        question="What were net sales in 2019?",
+        sources=[
             SourceItem(
                 source_id="amazon-row-1",
                 title="Item 6. Selected Consolidated Financial Data - Net sales (2019)",
@@ -117,6 +118,8 @@ def test_chat_stream_returns_sse_delta_and_final_events(mock_stream_answer_quest
             )
         ],
     )
+    mock_prepare_stream.return_value.mode = "llm_stream"
+    mock_build_stream.return_value = iter(["Net sales ", "were 280,522 in 2019."])
 
     with client.stream(
         "POST",
@@ -130,24 +133,30 @@ def test_chat_stream_returns_sse_delta_and_final_events(mock_stream_answer_quest
             if line
         )
 
+    assert "event: status" in body
     assert "event: delta" in body
     assert "event: final" in body
     assert '"event_version": 1' in body
+    assert '"phase": "retrieving"' in body
+    assert '"phase": "generating"' in body
     assert '"session_update_status": "committed"' in body
+    assert '"mode": "llm_stream"' in body
     assert '"full_answer": "Net sales were 280,522 in 2019."' in body
 
 
 @patch("app.backend.orchestrator.session_store.append_message")
 @patch("app.backend.orchestrator.session_store.load")
-@patch("app.backend.orchestrator.stream_answer_question")
-def test_chat_stream_returns_terminal_error_event_when_stream_fails(mock_stream_answer_question, mock_load, mock_append) -> None:
+@patch("app.backend.orchestrator.build_answer_stream")
+@patch("app.backend.orchestrator.prepare_knowledge_stream")
+def test_chat_stream_returns_terminal_error_event_when_stream_fails(mock_prepare_stream, mock_build_stream, mock_load, mock_append) -> None:
     mock_load.return_value = _session_state()
     mock_append.return_value = _session_state()
     def failing_stream():
         yield "partial"
         raise RuntimeError("boom")
 
-    mock_stream_answer_question.return_value = (failing_stream(), [])
+    mock_prepare_stream.return_value = Mock(question="What were net sales in 2019?", sources=[], mode="llm_stream")
+    mock_build_stream.return_value = failing_stream()
 
     with client.stream(
         "POST",
@@ -171,9 +180,11 @@ def test_chat_stream_returns_terminal_error_event_when_stream_fails(mock_stream_
 @patch("app.backend.orchestrator.session_store.append_message")
 @patch("app.backend.orchestrator.session_store.load")
 @patch("app.backend.orchestrator.answer_question")
-@patch("app.backend.orchestrator.stream_answer_question")
+@patch("app.backend.orchestrator.build_answer_stream")
+@patch("app.backend.orchestrator.prepare_knowledge_stream")
 def test_chat_stream_recovers_with_blocking_fallback_when_stream_fails_before_delta(
-    mock_stream_answer_question,
+    mock_prepare_stream,
+    mock_build_stream,
     mock_answer_question,
     mock_load,
     mock_append,
@@ -186,7 +197,8 @@ def test_chat_stream_recovers_with_blocking_fallback_when_stream_fails_before_de
         raise RuntimeError("boom before delta")
         yield ""
 
-    mock_stream_answer_question.return_value = (failing_stream(), [])
+    mock_prepare_stream.return_value = Mock(question="What does Amazon's business focus on?", sources=[], mode="llm_stream")
+    mock_build_stream.return_value = failing_stream()
     mock_answer_question.return_value = ("Recovered blocking answer.", [])
 
     with client.stream(
@@ -225,13 +237,14 @@ def test_chat_stream_rejects_order_status_requests(mock_load) -> None:
 @patch("app.backend.orchestrator.session_store.save")
 @patch("app.backend.orchestrator.session_store.append_message")
 @patch("app.backend.orchestrator.session_store.load")
-@patch("app.backend.orchestrator.stream_answer_question")
-def test_chat_stream_final_event_contains_sources_metadata(mock_stream_answer_question, mock_load, mock_append, mock_save) -> None:
+@patch("app.backend.orchestrator.build_answer_stream")
+@patch("app.backend.orchestrator.prepare_knowledge_stream")
+def test_chat_stream_final_event_contains_sources_metadata(mock_prepare_stream, mock_build_stream, mock_load, mock_append, mock_save) -> None:
     mock_load.return_value = _session_state()
     mock_append.return_value = _session_state()
-    mock_stream_answer_question.return_value = (
-        iter(["Item 6 includes net sales."]),
-        [
+    mock_prepare_stream.return_value = Mock(
+        question="What is Item 6?",
+        sources=[
             SourceItem(
                 source_id="amazon-row-1",
                 title="Item 6. Selected Consolidated Financial Data - Net sales (2019)",
@@ -246,6 +259,8 @@ def test_chat_stream_final_event_contains_sources_metadata(mock_stream_answer_qu
             )
         ],
     )
+    mock_prepare_stream.return_value.mode = "llm_stream"
+    mock_build_stream.return_value = iter(["Item 6 includes net sales."])
 
     with client.stream(
         "POST",
@@ -264,13 +279,14 @@ def test_chat_stream_final_event_contains_sources_metadata(mock_stream_answer_qu
     payload = json.loads(final_data_lines[0].split(":", 1)[1].strip())
     assert payload["event_version"] == EVENT_VERSION
     assert payload["session_update_status"] == "committed"
+    assert payload["mode"] == "llm_stream"
     assert payload["sources"][0]["metric"] == "Net sales"
     assert payload["sources"][0]["year"] == "2019"
     assert payload["sources"][0]["page_start"] == 8
     assert payload["sources"][0]["page_end"] == 8
     assert payload["full_answer"] == "Item 6 includes net sales."
 
-    mock_stream_answer_question.assert_called_once_with("What is Item 6?")
+    mock_prepare_stream.assert_called_once_with("What is Item 6?")
 
 
 @patch("app.backend.orchestrator.session_store.save")

@@ -5,7 +5,9 @@ from app.backend.knowledge_base import (
     _build_sources,
     _classify_question_intent,
     answer_question,
+    build_answer_stream,
     generate_grounded_answer,
+    prepare_knowledge_stream,
     retrieve_relevant_chunks,
     stream_answer_question,
 )
@@ -613,7 +615,10 @@ def test_stream_answer_question_returns_deterministic_stream_and_sources_for_num
 
     answer_stream, sources = stream_answer_question("What were net sales in 2019?")
 
-    assert "".join(answer_stream) == "Net sales in 2019 were **280,522 million USD**."
+    chunks = list(answer_stream)
+
+    assert "".join(chunks) == "Net sales in 2019 were **280,522 million USD**."
+    assert len(chunks) >= 2
     assert sources[0].metric == "Net sales"
 
 
@@ -623,7 +628,10 @@ def test_stream_answer_question_returns_fallback_when_no_chunks(mock_retrieve: M
 
     answer_stream, sources = stream_answer_question("Question without support")
 
-    assert "".join(answer_stream) == CONSERVATIVE_FALLBACK
+    chunks = list(answer_stream)
+
+    assert "".join(chunks) == CONSERVATIVE_FALLBACK
+    assert len(chunks) >= 2
     assert sources == []
 
 
@@ -638,6 +646,19 @@ def test_stream_answer_question_uses_llm_stream_when_generation_is_needed(mock_r
     assert "".join(answer_stream) == "Amazon focuses on low prices."
     assert len(sources) == 1
     mock_stream.assert_called_once()
+
+
+@patch("app.backend.knowledge_base.generate_grounded_answer_stream")
+@patch("app.backend.knowledge_base.retrieve_relevant_chunks")
+def test_build_answer_stream_splits_large_provider_delta_for_better_streaming(mock_retrieve: Mock, mock_stream: Mock) -> None:
+    mock_retrieve.return_value = [_sample_chunk()]
+    mock_stream.return_value = iter(["Amazon focuses on low prices, broad selection, and fast delivery for customers."])
+
+    prepared = prepare_knowledge_stream("What does the business focus on?")
+    chunks = list(build_answer_stream(prepared))
+
+    assert "".join(chunks) == "Amazon focuses on low prices, broad selection, and fast delivery for customers."
+    assert len(chunks) >= 2
 
 
 @patch("app.backend.knowledge_base.generate_chat_completion")

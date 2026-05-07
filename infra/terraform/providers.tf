@@ -4,10 +4,12 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.95"
+      version = ">= 6.36.0, < 7.0.0"
     }
   }
 }
+
+data "aws_partition" "current" {}
 
 resource "terraform_data" "opensearch_index_bootstrap" {
   triggers_replace = {
@@ -18,9 +20,9 @@ resource "terraform_data" "opensearch_index_bootstrap" {
   provisioner "local-exec" {
     command = "python ../../scripts/bootstrap_opensearch_index.py"
     environment = {
-      AWS_REGION                    = var.aws_region
+      AWS_REGION                     = var.aws_region
       OPENSEARCH_COLLECTION_ENDPOINT = aws_opensearchserverless_collection.knowledge.collection_endpoint
-      OPENSEARCH_INDEX_NAME         = var.opensearch_index_name
+      OPENSEARCH_INDEX_NAME          = var.opensearch_index_name
     }
   }
 

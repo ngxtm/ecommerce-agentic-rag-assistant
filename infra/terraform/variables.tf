@@ -34,7 +34,7 @@ variable "lambda_function_name" {
 variable "lambda_handler" {
   description = "Lambda handler path."
   type        = string
-  default     = "app.backend.handler.handler"
+  default     = "run.sh"
 }
 
 variable "lambda_runtime" {
@@ -43,16 +43,27 @@ variable "lambda_runtime" {
   default     = "python3.12"
 }
 
+variable "lambda_architecture" {
+  description = "CPU architecture used by Lambda functions."
+  type        = string
+  default     = "x86_64"
+
+  validation {
+    condition     = contains(["x86_64", "arm64"], var.lambda_architecture)
+    error_message = "lambda_architecture must be x86_64 or arm64."
+  }
+}
+
 variable "lambda_timeout_seconds" {
   description = "Lambda timeout in seconds."
   type        = number
-  default     = 30
+  default     = 60
 }
 
 variable "lambda_memory_mb" {
   description = "Lambda memory size in MB."
   type        = number
-  default     = 512
+  default     = 1024
 }
 
 variable "lambda_artifact_path" {
@@ -134,14 +145,20 @@ variable "memory_ttl_days" {
 }
 
 variable "api_name" {
-  description = "API Gateway HTTP API name."
+  description = "API Gateway REST API name."
   type        = string
 }
 
 variable "api_stage_name" {
   description = "API Gateway stage name."
   type        = string
-  default     = "$default"
+  default     = "prod"
+}
+
+variable "lambda_web_adapter_layer_version" {
+  description = "Published Lambda Web Adapter layer version to attach to the backend Lambda."
+  type        = number
+  default     = 25
 }
 
 variable "create_docs_bucket" {

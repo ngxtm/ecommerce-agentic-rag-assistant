@@ -12,6 +12,8 @@ from app.backend.search_client import RetrievedChunk, search_chunks
 
 CONSERVATIVE_FALLBACK = "I do not have enough grounded context in the available documents to answer that confidently yet."
 MIN_RETRIEVAL_SCORE = 0.1
+STREAMING_MIN_CHARS = 12
+STREAMING_MAX_CHARS = 40
 STOPWORDS = {
     "a",
     "an",
@@ -103,11 +105,12 @@ ITEM_EXPECTATION_RULES = (
 )
 
 @dataclass(frozen=True)
-class PreparedKnowledgeAnswer:
+class PreparedKnowledgeStream:
     question: str
     chunks: list[RetrievedChunk]
     sources: list[SourceItem]
     deterministic_answer: str | None = None
+    mode: str = "llm_stream"
 
 
 def _looks_like_risk_heading(question: str) -> bool:
@@ -641,6 +644,59 @@ def _deterministic_grounded_answer(question: str, chunks: list[RetrievedChunk]) 
         return _unsupported_item1a_heading_answer(question, chunks)
     return _grounded_narrative_answer(question, chunks)
 
+
+def _split_oversized_stream_token(token: str, *, max_chars: int = STREAMING_MAX_CHARS) -> Iterator[str]:
+    remainder = token
+    while len(remainder) > max_chars:
+        split_at = max_chars
+        for separator in (" ", "\n", "\t", "-", ",", ";", ":"):
+            separator_index = remainder.rfind(separator, 0, max_chars + 1)
+            if separator_index >= STREAMING_MIN_CHARS:
+                split_at = separator_index + (1 if separator.isspace() else 0)
+                break
+        yield remainder[:split_at]
+        remainder = remainder[split_at:]
+    if remainder:
+        yield remainder
+
+
+def _chunk_text_for_streaming(
+    text: str,
+    *,
+    min_chars: int = STREAMING_MIN_CHARS,
+    max_chars: int = STREAMING_MAX_CHARS,
+) -> Iterator[str]:
+    if not text:
+        return
+
+    tokens = re.findall(r"\S+\s*|\s+", text)
+    current = ""
+    sentence_boundary = re.compile(r"([.!?;:]\s*|\n+)$")
+
+    for token in tokens:
+        token_parts = [token] if len(token) <= max_chars else list(_split_oversized_stream_token(token, max_chars=max_chars))
+        for token_part in token_parts:
+            if current and len(current) + len(token_part) > max_chars:
+                yield current
+                current = ""
+            current += token_part
+            if len(current.strip()) >= min_chars and sentence_boundary.search(current):
+                yield current
+                current = ""
+
+    if current:
+        yield current
+
+
+def _normalize_provider_stream(chunks: Iterator[str]) -> Iterator[str]:
+    for chunk in chunks:
+        if not chunk:
+            continue
+        if len(chunk) <= STREAMING_MAX_CHARS and "\n\n" not in chunk:
+            yield chunk
+            continue
+        yield from _chunk_text_for_streaming(chunk)
+
 def _generate_or_synthesize_grounded_answer(question: str, chunks: list[RetrievedChunk]) -> str:
     answer = generate_chat_completion(_build_messages(question, _format_context(chunks)))
     if answer and answer != CONSERVATIVE_FALLBACK:
@@ -673,24 +729,42 @@ def _retrieval_top_k(question: str) -> int:
     return 8 if intent == "entity_lookup" and question.casefold().startswith("who are ") else 4
 
 
-def _prepare_knowledge_answer(question: str) -> PreparedKnowledgeAnswer:
+def prepare_knowledge_stream(question: str) -> PreparedKnowledgeStream:
     chunks = retrieve_relevant_chunks(question, top_k=_retrieval_top_k(question))
     if not chunks:
-        return PreparedKnowledgeAnswer(question=question, chunks=[], sources=[], deterministic_answer=CONSERVATIVE_FALLBACK)
+        return PreparedKnowledgeStream(
+            question=question,
+            chunks=[],
+            sources=[],
+            deterministic_answer=CONSERVATIVE_FALLBACK,
+            mode="fallback_stream",
+        )
     deterministic_answer = _deterministic_grounded_answer(question, chunks)
-    return PreparedKnowledgeAnswer(
+    if deterministic_answer == CONSERVATIVE_FALLBACK:
+        mode = "fallback_stream"
+    elif deterministic_answer is not None:
+        mode = "deterministic_stream"
+    else:
+        mode = "llm_stream"
+    return PreparedKnowledgeStream(
         question=question,
         chunks=chunks,
         sources=[] if deterministic_answer == CONSERVATIVE_FALLBACK else _build_sources(chunks, active_question=question),
         deterministic_answer=deterministic_answer,
+        mode=mode,
     )
 
 
-def stream_answer_question(question: str) -> tuple[Iterator[str], list[SourceItem]]:
-    prepared = _prepare_knowledge_answer(question)
+def build_answer_stream(prepared: PreparedKnowledgeStream) -> Iterator[str]:
     if not prepared.chunks or prepared.deterministic_answer is not None:
-        return iter([prepared.deterministic_answer or CONSERVATIVE_FALLBACK]), prepared.sources
-    return generate_grounded_answer_stream(question, prepared.chunks), prepared.sources
+        yield from _chunk_text_for_streaming(prepared.deterministic_answer or CONSERVATIVE_FALLBACK)
+        return
+    yield from _normalize_provider_stream(generate_grounded_answer_stream(prepared.question, prepared.chunks))
+
+
+def stream_answer_question(question: str) -> tuple[Iterator[str], list[SourceItem]]:
+    prepared = prepare_knowledge_stream(question)
+    return build_answer_stream(prepared), prepared.sources
 
 
 def _build_source_title(chunk: RetrievedChunk, active_question: str | None = None) -> str:
@@ -835,7 +909,7 @@ def _build_sources(chunks: list[RetrievedChunk], active_question: str | None = N
 
 def answer_question(question: str) -> tuple[str, list[SourceItem]]:
     try:
-        prepared = _prepare_knowledge_answer(question)
+        prepared = prepare_knowledge_stream(question)
         if not prepared.chunks:
             return CONSERVATIVE_FALLBACK, []
         if prepared.deterministic_answer is not None:

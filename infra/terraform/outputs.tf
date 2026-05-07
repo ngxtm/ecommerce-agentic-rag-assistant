@@ -1,6 +1,6 @@
 output "api_url" {
-  description = "Base URL for the deployed API Gateway HTTP API."
-  value       = aws_apigatewayv2_stage.default.invoke_url
+  description = "Base URL for the deployed API Gateway REST API."
+  value       = "https://${aws_api_gateway_rest_api.rest.id}.execute-api.${var.aws_region}.amazonaws.com/${aws_api_gateway_stage.default.stage_name}"
 }
 
 output "lambda_function_name" {

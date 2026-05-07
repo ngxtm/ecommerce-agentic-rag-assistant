@@ -57,15 +57,15 @@ resource "aws_cloudwatch_metric_alarm" "api_gateway_5xx" {
   alarm_description   = "Alarm when API Gateway returns 5XX responses."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
-  metric_name         = "5xx"
+  metric_name         = "5XXError"
   namespace           = "AWS/ApiGateway"
   period              = 300
   statistic           = "Sum"
   threshold           = 0
 
   dimensions = {
-    ApiId = aws_apigatewayv2_api.http.id
-    Stage = aws_apigatewayv2_stage.default.name
+    ApiName = aws_api_gateway_rest_api.rest.name
+    Stage   = aws_api_gateway_stage.default.stage_name
   }
 
   tags = local.base_tags
