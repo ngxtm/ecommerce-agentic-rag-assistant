@@ -6,6 +6,7 @@ from collections.abc import Iterator
 
 from app.backend.llm_client import LLMClientError, generate_chat_completion, generate_chat_completion_stream
 from app.backend.models import SourceItem
+from app.backend.query_references import resolve_section_overview_item
 from app.backend.risk_headings import extract_risk_heading_reference, question_references_risk_heading
 from app.backend.search_client import RetrievedChunk, search_chunks
 
@@ -157,9 +158,12 @@ def _is_numeric_question(question: str) -> bool:
 def _classify_question_intent(question: str) -> str:
     question_lower = question.casefold()
     keywords = _extract_question_keywords(question)
+    section_overview_item = resolve_section_overview_item(question)
     expected_items = _expected_items(question)
     if _is_numeric_question(question):
         return "numeric_table"
+    if section_overview_item is not None:
+        return "section_overview"
     if "Item 1A. Risk Factors" in expected_items:
         if any(keyword in question_lower for keyword in ("summarize", "summary", "overview", "major themes", "structured", "explain")):
             return "narrative_explainer"
@@ -269,6 +273,9 @@ def _expected_items(question: str) -> set[str]:
     keywords = _extract_question_keywords(question)
     question_lower = question.casefold()
     expected: set[str] = set()
+    section_overview_item = resolve_section_overview_item(question)
+    if section_overview_item is not None:
+        expected.add(section_overview_item)
     for item_name, matcher in ITEM_EXPECTATION_RULES:
         if matcher(question_lower, keywords):
             expected.add(item_name)
@@ -303,6 +310,14 @@ def _content_type_priority(chunk: RetrievedChunk, intent: str) -> int:
             return 5
         if chunk.content_type == "fact":
             return 3
+        return 1
+    if intent == "section_overview":
+        if chunk.content_type == "narrative":
+            return 5
+        if chunk.content_type == "fact":
+            return 4
+        if chunk.content_type == "table_block":
+            return 2
         return 1
     if intent == "narrative_explainer":
         if chunk.content_type == "fact":
@@ -357,11 +372,16 @@ def _rerank_chunks(question: str, chunks: list[RetrievedChunk]) -> list[Retrieve
             exact_match_bonus += 18
         elif expected_items and chunk.item and chunk.item not in expected_items:
             penalty += 10
+        if intent == "section_overview":
+            if expected_items and chunk.section in expected_items:
+                exact_match_bonus += 12
+            if chunk.content_type == "table_row":
+                penalty += 8
         if intent == "narrative_explainer" and _is_large_item2_blob(chunk) and chunk.item not in expected_items:
             penalty += 24
-        if intent == "narrative_explainer" and chunk.item == "Item 1. Business" and chunk.subsection in {"General", "Consumers"} and (keywords & BUSINESS_QUERY_HINTS):
+        if intent in {"narrative_explainer", "section_overview"} and chunk.item == "Item 1. Business" and chunk.subsection in {"General", "Consumers"} and (keywords & BUSINESS_QUERY_HINTS or question.casefold().strip(" ?.\"'") in {"business", "item 1", "item 1 business"}):
             exact_match_bonus += 14
-        if intent == "narrative_explainer" and chunk.item == "Item 3. Legal Proceedings" and (keywords & LEGAL_QUERY_HINTS):
+        if intent in {"narrative_explainer", "section_overview"} and chunk.item == "Item 3. Legal Proceedings" and (keywords & LEGAL_QUERY_HINTS or question.casefold().strip(" ?.\"'") in {"legal proceedings", "item 3", "item 3 legal proceedings"}):
             exact_match_bonus += 20
         if intent == "numeric_table" and chunk.metric and chunk.metric.casefold() in question.casefold():
             exact_match_bonus += 6
@@ -458,7 +478,7 @@ def _limit_chunks_for_intent(question: str, chunks: list[RetrievedChunk]) -> lis
             if table_blocks:
                 return table_blocks[:2]
         return prioritized[:5] if prioritized else chunks[:5]
-    if intent == "narrative_explainer":
+    if intent in {"narrative_explainer", "section_overview"}:
         expected_items = _expected_items(question)
         prioritized = [chunk for chunk in chunks if chunk.content_type in {"narrative", "fact", "table_block"}]
         if expected_items:
@@ -469,12 +489,14 @@ def _limit_chunks_for_intent(question: str, chunks: list[RetrievedChunk]) -> lis
                 if "Item 8. Financial Statements and Supplementary Data" in expected_items and not any(chunk.item == "Item 8. Financial Statements and Supplementary Data" for chunk in prioritized):
                     item_specific = [chunk for chunk in item_specific if chunk.item != "Item 1A. Risk Factors"]
                 item_specific = [chunk for chunk in item_specific if not (_is_large_item2_blob(chunk) and chunk.item not in expected_items)]
-                return item_specific[:5] if item_specific else chunks[:3]
+                limit = 6 if intent == "section_overview" else 5
+                return item_specific[:limit] if item_specific else chunks[:3]
         fallback = [chunk for chunk in prioritized if not _is_large_item2_blob(chunk)]
         if expected_items & {"Item 7A. Quantitative and Qualitative Disclosures About Market Risk", "Item 8. Financial Statements and Supplementary Data"}:
             fallback = [chunk for chunk in fallback if chunk.item != "Item 1A. Risk Factors"]
             return fallback[:3] if fallback else []
-        return fallback[:5] if fallback else prioritized[:5] if prioritized else chunks[:5]
+        limit = 6 if intent == "section_overview" else 5
+        return fallback[:limit] if fallback else prioritized[:limit] if prioritized else chunks[:limit]
     return chunks[:6]
 
 
@@ -523,7 +545,7 @@ def _is_cross_reference_only(chunk: RetrievedChunk) -> bool:
 
 def _grounded_narrative_answer(question: str, chunks: list[RetrievedChunk]) -> str | None:
     intent = _classify_question_intent(question)
-    if intent != "narrative_explainer" or not chunks:
+    if intent not in {"narrative_explainer", "section_overview"} or not chunks:
         return None
 
     expected_items = _expected_items(question)
@@ -557,17 +579,18 @@ def _narrative_summary_candidates(chunks: list[RetrievedChunk]) -> list[Retrieve
 
 def _synthesize_grounded_narrative_summary(question: str, chunks: list[RetrievedChunk]) -> str | None:
     intent = _classify_question_intent(question)
-    if intent != "narrative_explainer":
+    if intent not in {"narrative_explainer", "section_overview"}:
         return None
 
     candidates = _narrative_summary_candidates(chunks)
-    if len(candidates) < 2:
+    minimum_candidates = 1 if intent == "section_overview" else 2
+    if len(candidates) < minimum_candidates:
         return None
 
     expected_items = _expected_items(question)
     if expected_items:
         candidates = [chunk for chunk in candidates if chunk.item in expected_items]
-    if len(candidates) < 2:
+    if len(candidates) < minimum_candidates:
         return None
 
     grouped: dict[str, RetrievedChunk] = {}
@@ -578,7 +601,7 @@ def _synthesize_grounded_narrative_summary(question: str, chunks: list[Retrieved
             grouped[group_key] = chunk
 
     selected = sorted(grouped.values(), key=lambda chunk: chunk.score, reverse=True)[:4]
-    if len(selected) < 2:
+    if len(selected) < minimum_candidates:
         return None
 
     leading_item = selected[0].item or selected[0].section or "the filing"
@@ -592,12 +615,17 @@ def _synthesize_grounded_narrative_summary(question: str, chunks: list[Retrieved
         snippet = first_sentence if len(first_sentence) <= 220 else first_sentence[:217].rstrip() + "..."
         summary_lines.append(f"- {label}: {snippet}")
 
-    if len(summary_lines) < 2:
+    if len(summary_lines) < minimum_candidates:
         return None
 
     prefix = f"The available context in {leading_item} highlights these supported themes:\n"
     if expected_items == {"Item 1A. Risk Factors"}:
         prefix = f"{_item1a_excerpt_summary_prefix(chunks)}, these are the supported themes I can ground:\n"
+    elif intent == "section_overview":
+        if len(summary_lines) == 1:
+            prefix = f"Based on available context in {leading_item}, this is the grounded section summary I can provide:\n"
+        else:
+            prefix = f"Based on available context in {leading_item}, these are the grounded themes I can provide:\n"
     return prefix + "\n".join(summary_lines)
 
 
@@ -642,6 +670,8 @@ def _deterministic_grounded_answer(question: str, chunks: list[RetrievedChunk]) 
             return f"{row.metric} in {row.year} were **{row.value_raw}{unit}**."
     if intent == "heading_lookup" and _best_heading_overlap(question, chunks) < 4:
         return _unsupported_item1a_heading_answer(question, chunks)
+    if intent == "section_overview":
+        return _grounded_narrative_answer(question, chunks) or _synthesize_grounded_narrative_summary(question, chunks)
     return _grounded_narrative_answer(question, chunks)
 
 
@@ -726,6 +756,8 @@ def generate_grounded_answer_stream(question: str, chunks: list[RetrievedChunk])
 
 def _retrieval_top_k(question: str) -> int:
     intent = _classify_question_intent(question)
+    if intent == "section_overview":
+        return 8
     return 8 if intent == "entity_lookup" and question.casefold().startswith("who are ") else 4
 
 

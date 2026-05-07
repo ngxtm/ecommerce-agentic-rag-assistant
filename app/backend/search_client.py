@@ -12,6 +12,7 @@ from requests_aws4auth import AWS4Auth
 from app.backend.aws_auth import get_frozen_credentials
 from app.backend.config import get_aws_region
 from app.backend.knowledge_index_schema import INDEX_SCHEMA_VERSION, VECTOR_FIELD, get_embedding_dimensions_override
+from app.backend.query_references import extract_query_reference, resolve_section_overview_rule
 from app.backend.risk_headings import extract_risk_heading_reference, question_references_risk_heading
 from app.backend.llm_client import LLMClientError, generate_chat_completion, generate_embedding
 
@@ -52,6 +53,7 @@ RETRIEVAL_PROFILES: dict[str, RetrievalProfile] = {
     "heading_lookup": RetrievalProfile(intent="heading_lookup", lexical_weight=1.0, vector_weight=0.0, vector_mode="disabled"),
     "numeric_table": RetrievalProfile(intent="numeric_table", lexical_weight=1.0, vector_weight=0.0, vector_mode="disabled"),
     "entity_lookup": RetrievalProfile(intent="entity_lookup", lexical_weight=0.9, vector_weight=0.1, vector_mode="weak_lexical_fallback"),
+    "section_overview": RetrievalProfile(intent="section_overview", lexical_weight=0.8, vector_weight=0.2, vector_mode="always"),
     "narrative_explainer": RetrievalProfile(intent="narrative_explainer", lexical_weight=0.65, vector_weight=0.35, vector_mode="always"),
     "general_lookup": RetrievalProfile(intent="general_lookup", lexical_weight=0.55, vector_weight=0.45, vector_mode="always"),
 }
@@ -323,8 +325,23 @@ def _explicit_item_rule(question: str) -> dict[str, object] | None:
     return None
 
 
+def _explicit_item_rule_for_item(item: str) -> dict[str, object] | None:
+    for rule in EXPLICIT_ITEM_ROUTING_RULES:
+        if str(rule["item"]) == item:
+            return rule
+    return None
+
+
+def _resolved_item_rule(question: str) -> dict[str, object] | None:
+    section_overview_rule = resolve_section_overview_rule(question)
+    if section_overview_rule is not None:
+        return _explicit_item_rule_for_item(section_overview_rule.item)
+    return _explicit_item_rule(question)
+
+
 def _classify_query_intent(question: str) -> str:
     normalized = question.casefold()
+    section_overview_rule = resolve_section_overview_rule(question)
     explicit_item = _explicit_item_rule(question)
     if any(hint in normalized for hint in NUMERIC_QUERY_HINTS):
         return "numeric_table"
@@ -332,6 +349,8 @@ def _classify_query_intent(question: str) -> str:
         return "entity_lookup"
     if any(hint in normalized for hint in EXECUTIVE_QUERY_HINTS):
         return "entity_lookup"
+    if section_overview_rule is not None:
+        return "section_overview"
     if explicit_item is not None and str(explicit_item["item"]) == "Item 1A. Risk Factors":
         if any(keyword in normalized for keyword in ("summarize", "summary", "overview", "major themes", "structured", "explain")):
             return "narrative_explainer"
@@ -352,7 +371,8 @@ def _get_retrieval_profile(question: str, intent: str | None = None) -> Retrieva
 
 def _expand_query(question: str, intent: str) -> str:
     normalized = question.casefold()
-    explicit_item = _explicit_item_rule(question)
+    routing_rule = _resolved_item_rule(question)
+    reference_text = extract_query_reference(question) or question
     if intent == "entity_lookup":
         return f"{question} Information About Our Executive Officers Executive Officers and Directors Board of Directors leadership"
     if intent == "heading_lookup":
@@ -360,8 +380,10 @@ def _expand_query(question: str, intent: str) -> str:
         return f"{heading_text} Item 1A Risk Factors subsection heading"
     if intent == "numeric_table":
         return f"{question} Selected Consolidated Financial Data table"
-    if explicit_item is not None:
-        return f"{question} {explicit_item['expansion']}"
+    if intent == "section_overview" and routing_rule is not None:
+        return f"{reference_text} {routing_rule['expansion']} section overview major themes subsection summary"
+    if routing_rule is not None:
+        return f"{question} {routing_rule['expansion']}"
     if any(hint in normalized for hint in ITEM_1_HINTS):
         return f"{question} Item 1 Business General Consumers Sellers developers enterprises customer-centric focus selection price convenience"
     if any(hint in normalized for hint in ITEM_2_HINTS):
@@ -416,6 +438,18 @@ def _fields_for_intent(intent: str, phrase: bool = False) -> list[str]:
         return [field.replace("entity_name^6", "entity_name^14").replace("entity_role^4", "entity_role^10").replace("subsection^8", "subsection^10") for field in base_fields]
     if intent == "heading_lookup":
         return [field.replace("subsection^8", "subsection^16").replace("subsubsection^9", "subsubsection^18").replace("section^8", "section^10") for field in base_fields]
+    if intent == "section_overview":
+        return [
+            field.replace("section^8", "section^14")
+            .replace("section^12", "section^18")
+            .replace("item^4", "item^14")
+            .replace("item^8", "item^18")
+            .replace("subsection^8", "subsection^11")
+            .replace("subsection^12", "subsection^15")
+            .replace("subsubsection^9", "subsubsection^12")
+            .replace("subsubsection^14", "subsubsection^16")
+            for field in base_fields
+        ]
     if intent == "narrative_explainer":
         return [field.replace("item^4", "item^10").replace("subsection^8", "subsection^12").replace("subsubsection^9", "subsubsection^14") for field in base_fields]
     return base_fields
@@ -425,7 +459,9 @@ def _build_lexical_query(question: str, top_k: int, intent: str | None = None) -
     resolved_intent = intent or _classify_query_intent(question)
     expanded_question = _expand_query(question, resolved_intent)
     normalized = question.casefold()
-    explicit_item = _explicit_item_rule(question)
+    routing_rule = _resolved_item_rule(question)
+    section_overview_rule = resolve_section_overview_rule(question)
+    reference_text = extract_query_reference(question) or question
     should = [
         {
             "multi_match": {
@@ -451,16 +487,23 @@ def _build_lexical_query(question: str, top_k: int, intent: str | None = None) -
         should.append({"term": {"subsection.keyword": {"value": heading_text, "boost": 60}}})
         should.append({"match_phrase": {"subsection": {"query": heading_text, "boost": 45}}})
         should.append({"match_phrase": {"content": {"query": heading_text, "boost": 12}}})
-    if explicit_item is not None:
-        should.extend(explicit_item["boosts"])
+    if resolved_intent == "section_overview" and routing_rule is not None and section_overview_rule is not None:
+        should.extend(routing_rule["boosts"])
+        should.append({"term": {"item.keyword": {"value": str(routing_rule["item"]), "boost": 35}}})
+        should.append({"term": {"section.keyword": {"value": str(routing_rule["item"]), "boost": 35}}})
+        should.append({"match_phrase": {"item": {"query": str(routing_rule["item"]), "boost": 28}}})
+        should.append({"match_phrase": {"section": {"query": str(routing_rule["item"]), "boost": 28}}})
+        should.append({"match_phrase": {"content": {"query": reference_text, "boost": 8}}})
+    elif routing_rule is not None:
+        should.extend(routing_rule["boosts"])
     if resolved_intent == "narrative_explainer":
         if any(hint in normalized for hint in ITEM_1_HINTS) and not any(hint in normalized for hint in ITEM_2_HINTS):
             should.append({"term": {"item.keyword": {"value": "Item 1. Business", "boost": 25}}})
             should.append({"term": {"subsection.keyword": {"value": "General", "boost": 12}}})
             should.append({"term": {"subsection.keyword": {"value": "Consumers", "boost": 16}}})
-        if explicit_item is None and any(hint in normalized for hint in ITEM_3_HINTS):
+        if routing_rule is None and any(hint in normalized for hint in ITEM_3_HINTS):
             should.append({"term": {"item.keyword": {"value": "Item 3. Legal Proceedings", "boost": 28}}})
-        if explicit_item is None and any(hint in normalized for hint in ITEM_2_HINTS):
+        if routing_rule is None and any(hint in normalized for hint in ITEM_2_HINTS):
             should.append({"term": {"item.keyword": {"value": "Item 2. Properties", "boost": 24}}})
     return {
         "size": max(top_k * LEXICAL_CANDIDATE_MULTIPLIER, top_k),
@@ -478,9 +521,9 @@ def _build_lexical_query(question: str, top_k: int, intent: str | None = None) -
 def _build_vector_query(question_embedding: list[float], top_k: int, question: str, intent: str) -> dict[str, object]:
     candidate_count = max(top_k * VECTOR_CANDIDATE_MULTIPLIER, top_k)
     filters = list(_build_doc_filter())
-    explicit_item = _explicit_item_rule(question)
-    if intent == "narrative_explainer" and explicit_item is not None:
-        filters.append({"term": {"item.keyword": str(explicit_item["item"])}})
+    routing_rule = _resolved_item_rule(question)
+    if intent in {"narrative_explainer", "section_overview"} and routing_rule is not None:
+        filters.append({"term": {"item.keyword": str(routing_rule["item"])}})
     return {
         "size": candidate_count,
         "query": {
@@ -574,6 +617,7 @@ def _should_retry_with_rewrite(question: str, chunks: list[RetrievedChunk], inte
     if not chunks:
         return True
     resolved_intent = intent or _classify_query_intent(question)
+    routing_rule = _resolved_item_rule(question)
     top_score = max(chunk.score for chunk in chunks)
     if top_score < 0.2:
         return True
@@ -582,9 +626,11 @@ def _should_retry_with_rewrite(question: str, chunks: list[RetrievedChunk], inte
             return True
         if not _has_heading_subsection_overlap(question, chunks[:4]):
             return True
+    if resolved_intent == "section_overview":
+        if routing_rule is not None and not _best_item_match(chunks[:6], str(routing_rule["item"])):
+            return True
     if resolved_intent == "narrative_explainer":
-        explicit_item = _explicit_item_rule(question)
-        if explicit_item is not None and not _best_item_match(chunks[:4], str(explicit_item["item"])):
+        if routing_rule is not None and not _best_item_match(chunks[:4], str(routing_rule["item"])):
             return True
     return False
 

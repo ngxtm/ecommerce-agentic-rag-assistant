@@ -20,9 +20,15 @@ def test_classify_question_intent_treats_conversational_risk_heading_as_heading_
     assert _classify_question_intent("Can you tell me more about We Face Intense Competition") == "heading_lookup"
     assert _classify_question_intent("Can you tell me more about Our Supplier Relationships Subject Us to a Number of Risks") == "heading_lookup"
 
+def test_classify_question_intent_routes_generic_section_titles_to_section_overview() -> None:
+    assert _classify_question_intent("Risk Factors") == "section_overview"
+    assert _classify_question_intent("Item 1A Risk Factors") == "section_overview"
+    assert _classify_question_intent('Can you tell me more about: "Risk Factors"') == "section_overview"
+
 
 def test_extract_risk_heading_reference_strips_conversational_wrapper() -> None:
     assert extract_risk_heading_reference("Can you tell me more about We Face Intense Competition") == "We Face Intense Competition"
+    assert extract_risk_heading_reference('Can you tell me more about: "We Face Intense Competition"') == "We Face Intense Competition"
     assert (
         extract_risk_heading_reference("Can you tell me more about Our Supplier Relationships Subject Us to a Number of Risks")
         == "Our Supplier Relationships Subject Us to a Number of Risks"
@@ -43,6 +49,31 @@ def test_generate_grounded_answer_uses_extracted_heading_for_conversational_risk
     )
 
     assert "I do not see **We Face Intense Competition**" in answer
+
+@patch("app.backend.knowledge_base.generate_chat_completion")
+def test_generate_grounded_answer_summarizes_generic_risk_factors_overview(mock_generate_chat_completion: Mock) -> None:
+    mock_generate_chat_completion.return_value = CONSERVATIVE_FALLBACK
+
+    answer = generate_grounded_answer(
+        'Can you tell me more about: "Risk Factors"',
+        [
+            _item1a_chunk(
+                score=5.0,
+                subsection="We Face Intense Competition",
+                content="Competition across retail, cloud, devices, and logistics may reduce sales and profits.",
+            ),
+            _item1a_chunk(
+                score=4.8,
+                subsection="Government Regulation Is Evolving and Unfavorable Changes Could Harm Our Business",
+                content="Regulatory changes across tax, privacy, and labor could increase costs or constrain operations.",
+            ),
+        ],
+    )
+
+    assert "supported themes" in answer or "grounded section summary" in answer
+    assert "We Face Intense Competition" in answer
+    assert "Government Regulation Is Evolving" in answer
+    assert "I do not see **Risk Factors**" not in answer
 
 
 def _sample_chunk() -> RetrievedChunk:
@@ -477,6 +508,31 @@ def test_retrieve_relevant_chunks_prefers_item1a_for_generalized_risk_summary_qu
         assert all(chunk.item == "Item 1A. Risk Factors" for chunk in chunks)
         assert chunks[0].section == "Item 1A. Risk Factors"
 
+@patch("app.backend.knowledge_base.search_chunks")
+def test_retrieve_relevant_chunks_routes_generic_risk_factors_to_section_overview(mock_search_chunks: Mock) -> None:
+    mock_search_chunks.return_value = [
+        _sample_chunk(),
+        _item1a_chunk(
+            score=5.2,
+            subsection="We Face Intense Competition",
+            content="Competition may reduce sales, compress margins, and increase spending.",
+        ),
+        _item1a_chunk(
+            score=5.0,
+            subsection="Government Regulation Is Evolving and Unfavorable Changes Could Harm Our Business",
+            content="Regulatory change may increase compliance costs and constrain operations.",
+        ),
+    ]
+
+    chunks = retrieve_relevant_chunks('Can you tell me more about: "Risk Factors"')
+
+    assert chunks
+    assert all(chunk.item == "Item 1A. Risk Factors" for chunk in chunks)
+    assert {chunk.subsection for chunk in chunks} >= {
+        "We Face Intense Competition",
+        "Government Regulation Is Evolving and Unfavorable Changes Could Harm Our Business",
+    }
+
 
 def test_build_sources_deduplicates_by_semantic_key_for_profile_rows() -> None:
     first = _profile_row_chunk()
@@ -607,6 +663,27 @@ def test_build_sources_for_heading_lookup_keeps_only_best_matching_risk_heading(
 
     assert len(sources) == 1
     assert sources[0].source_id == "risk-best"
+
+def test_build_sources_for_section_overview_keeps_actual_subsection_labels() -> None:
+    sources = _build_sources(
+        [
+            _item1a_chunk(
+                score=5.0,
+                subsection="We Face Intense Competition",
+                content="Competition may reduce sales and profits.",
+            ),
+            _item1a_chunk(
+                score=4.8,
+                subsection="Government Regulation Is Evolving and Unfavorable Changes Could Harm Our Business",
+                content="Regulatory changes may increase costs.",
+            ),
+        ],
+        active_question='Can you tell me more about: "Risk Factors"',
+    )
+
+    assert len(sources) == 2
+    assert sources[0].title.endswith("We Face Intense Competition")
+    assert "Risk Factors: Competition may reduce sales and profits." not in sources[0].snippet
 
 
 @patch("app.backend.knowledge_base.retrieve_relevant_chunks")

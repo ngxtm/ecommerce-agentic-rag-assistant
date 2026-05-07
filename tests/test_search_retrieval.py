@@ -59,13 +59,16 @@ def test_search_chunks_returns_normalized_hits_with_extended_metadata(mock_geten
 def test_classify_query_intent_handles_numeric_entity_and_heading_queries() -> None:
     assert _classify_query_intent("What were net sales in 2019?") == "numeric_table"
     assert _classify_query_intent("Who are the executive officers and directors?") == "entity_lookup"
+    assert _classify_query_intent("Risk Factors") == "section_overview"
+    assert _classify_query_intent("Item 1A Risk Factors") == "section_overview"
+    assert _classify_query_intent('Can you tell me more about: "Risk Factors"') == "section_overview"
     assert _classify_query_intent("The Loss of Key Senior Management Personnel Could Harm Our Business") == "heading_lookup"
     assert _classify_query_intent("Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers") == "heading_lookup"
     assert _classify_query_intent("Can you tell me more about We Face Intense Competition") == "heading_lookup"
     assert _classify_query_intent("Can you tell me more about Our Supplier Relationships Subject Us to a Number of Risks") == "heading_lookup"
     assert _classify_query_intent("Summarize the risk factors described in Item 1A of Amazon's filing.") == "narrative_explainer"
     assert _classify_query_intent("What facilities did Amazon operate?") == "narrative_explainer"
-    assert _classify_query_intent("Market for the Registrant's Common Stock, Related Shareholder Matters, and Issuer Purchases of Equity Securities") == "narrative_explainer"
+    assert _classify_query_intent("Market for the Registrant's Common Stock, Related Shareholder Matters, and Issuer Purchases of Equity Securities") == "section_overview"
 
 
 def test_build_lexical_query_boosts_entity_fields_for_entity_lookup() -> None:
@@ -95,6 +98,21 @@ def test_build_lexical_query_adds_exact_heading_boost_for_conversational_heading
 
     assert {"term": {"subsection.keyword": {"value": "We Face Intense Competition", "boost": 60}}} in should_clauses
 
+def test_build_lexical_query_routes_generic_risk_factors_to_section_overview() -> None:
+    query = _build_lexical_query('Can you tell me more about: "Risk Factors"', top_k=4)
+    best_fields = query["query"]["bool"]["should"][0]["multi_match"]["fields"]
+    should_clauses = query["query"]["bool"]["should"]
+
+    assert "item^14" in best_fields
+    assert any(clause.get("term", {}).get("item.keyword", {}).get("value") == "Item 1A. Risk Factors" for clause in should_clauses)
+    assert not any("subsection.keyword" in clause.get("term", {}) for clause in should_clauses)
+
+def test_build_lexical_query_routes_generic_properties_title_to_item2() -> None:
+    query = _build_lexical_query("Properties", top_k=4)
+    should_clauses = query["query"]["bool"]["should"]
+
+    assert any(clause.get("term", {}).get("item.keyword", {}).get("value") == "Item 2. Properties" for clause in should_clauses)
+
 
 def test_build_lexical_query_filters_by_shared_index_schema_version() -> None:
     query = _build_lexical_query("What does Amazon's business focus on?", top_k=4)
@@ -109,12 +127,25 @@ def test_build_vector_query_uses_knn_and_item_filter_for_explicit_item_query() -
     assert {"term": {"index_version": INDEX_SCHEMA_VERSION}} in knn_query["filter"]["bool"]["filter"]
     assert {"term": {"item.keyword": "Item 2. Properties"}} in knn_query["filter"]["bool"]["filter"]
 
+def test_build_vector_query_filters_generic_section_overview_by_item() -> None:
+    query = _build_vector_query([0.1] * 8, top_k=4, question="Risk Factors", intent="section_overview")
+    knn_query = query["query"]["knn"]["embedding"]
+
+    assert {"term": {"item.keyword": "Item 1A. Risk Factors"}} in knn_query["filter"]["bool"]["filter"]
+
 def test_get_retrieval_profile_keeps_heading_lookup_lexical_only() -> None:
     profile = _get_retrieval_profile("Can you tell me more about We Face Intense Competition")
 
     assert profile.intent == "heading_lookup"
     assert profile.lexical_weight == 1.0
     assert profile.vector_weight == 0.0
+
+def test_get_retrieval_profile_prefers_lexical_but_keeps_vector_for_section_overview() -> None:
+    profile = _get_retrieval_profile("Risk Factors")
+
+    assert profile.intent == "section_overview"
+    assert profile.lexical_weight > profile.vector_weight
+    assert profile.vector_weight > 0.0
 
 def test_should_run_vector_search_skips_strong_entity_lookup_match() -> None:
     profile = _get_retrieval_profile("Who is Andrew R. Jassy?")

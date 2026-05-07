@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from app.backend.query_references import extract_query_reference
+
 RISK_HEADING_ENDINGS = (
     "Could Harm Our Business",
     "May Harm Our Business",
@@ -169,6 +171,9 @@ def extract_risk_heading_reference(question: str) -> str | None:
     normalized = normalize_text_line(question).strip("?.! ")
     if not normalized:
         return None
+    reference = extract_query_reference(question)
+    if reference and looks_like_risk_heading(reference):
+        return reference
     for pattern in QUESTION_PREFIX_PATTERNS:
         match = pattern.match(normalized)
         if not match:
