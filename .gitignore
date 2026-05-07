@@ -15,3 +15,4 @@ infra/terraform/terraform.tfvars
 
 
 docs/
+.codex-config.before-google-surf.toml
