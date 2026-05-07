@@ -272,10 +272,10 @@ def _unsupported_item1a_heading_answer(question: str, chunks: list[RetrievedChun
 def _expected_items(question: str) -> set[str]:
     keywords = _extract_question_keywords(question)
     question_lower = question.casefold()
-    expected: set[str] = set()
     section_overview_item = resolve_section_overview_item(question)
     if section_overview_item is not None:
-        expected.add(section_overview_item)
+        return {section_overview_item}
+    expected: set[str] = set()
     for item_name, matcher in ITEM_EXPECTATION_RULES:
         if matcher(question_lower, keywords):
             expected.add(item_name)

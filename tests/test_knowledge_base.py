@@ -70,7 +70,8 @@ def test_generate_grounded_answer_summarizes_generic_risk_factors_overview(mock_
         ],
     )
 
-    assert "supported themes" in answer or "grounded section summary" in answer
+    assert "Item 1A" in answer
+    assert "ground" in answer
     assert "We Face Intense Competition" in answer
     assert "Government Regulation Is Evolving" in answer
     assert "I do not see **Risk Factors**" not in answer

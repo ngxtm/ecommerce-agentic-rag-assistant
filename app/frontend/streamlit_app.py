@@ -9,6 +9,8 @@ import httpx
 import streamlit as st
 from dotenv import load_dotenv
 
+from app.frontend.chat_state import append_history_message, commit_assistant_message, consume_post_commit_rerender
+
 EVENT_VERSION = 1
 STREAMING_ORDER_FALLBACK_MESSAGE = "Streaming is only available for knowledge questions."
 
@@ -234,6 +236,7 @@ st.set_page_config(page_title="Agentic Commerce Assistant", page_icon=":speech_b
 st.title("Agentic Commerce Assistant")
 
 session_id = st.text_input("Session ID", value=_get_session_id())
+consume_post_commit_rerender(st.session_state)
 messages = _get_messages()
 
 for message in messages:
@@ -243,7 +246,7 @@ for message in messages:
 prompt = st.chat_input("Ask about company documents or check an order status")
 
 if prompt:
-    messages.append(_user_message(prompt))
+    append_history_message(st.session_state, _user_message(prompt))
     with st.chat_message("user"):
         st.markdown(prompt)
 
@@ -274,4 +277,5 @@ if prompt:
             answer_placeholder.markdown(assistant_content)
             assistant_message = _assistant_message(assistant_content)
 
-    messages.append(assistant_message)
+    commit_assistant_message(st.session_state, assistant_message)
+    st.rerun()
