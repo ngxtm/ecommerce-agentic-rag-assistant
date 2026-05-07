@@ -11,10 +11,10 @@ from requests_aws4auth import AWS4Auth
 
 from app.backend.aws_auth import get_frozen_credentials
 from app.backend.config import get_aws_region
+from app.backend.knowledge_index_schema import INDEX_SCHEMA_VERSION, VECTOR_FIELD
+from app.backend.risk_headings import extract_risk_heading_reference, question_references_risk_heading
 from app.backend.llm_client import LLMClientError, generate_chat_completion, generate_embedding
 
-TARGET_INDEX_VERSION = "v2_parser_foundation"
-VECTOR_FIELD = "embedding"
 LEXICAL_CANDIDATE_MULTIPLIER = 3
 VECTOR_CANDIDATE_MULTIPLIER = 3
 MIN_VECTOR_DIMENSIONS = 8
@@ -45,6 +45,8 @@ def _looks_like_risk_heading(question: str) -> bool:
     normalized = _normalize_question_text(question)
     if not normalized:
         return False
+    if question_references_risk_heading(normalized):
+        return True
     if any(hint in normalized for hint in RISK_HEADING_HINTS):
         return True
     return normalized.startswith("risks related to ")
@@ -249,7 +251,7 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
 
 def _build_doc_filter() -> list[dict[str, object]]:
     return [
-        {"term": {"index_version": TARGET_INDEX_VERSION}},
+        {"term": {"index_version": INDEX_SCHEMA_VERSION}},
     ]
 
 
@@ -334,7 +336,8 @@ def _expand_query(question: str, intent: str) -> str:
     if intent == "entity_lookup":
         return f"{question} Information About Our Executive Officers Executive Officers and Directors Board of Directors leadership"
     if intent == "heading_lookup":
-        return f"{question} Item 1A Risk Factors subsection heading"
+        heading_text = extract_risk_heading_reference(question) or question
+        return f"{heading_text} Item 1A Risk Factors subsection heading"
     if intent == "numeric_table":
         return f"{question} Selected Consolidated Financial Data table"
     if explicit_item is not None:
@@ -421,6 +424,13 @@ def _build_lexical_query(question: str, top_k: int) -> dict[str, object]:
             }
         },
     ]
+    if intent == "heading_lookup":
+        heading_text = extract_risk_heading_reference(question) or question
+        should.append({"term": {"item.keyword": {"value": "Item 1A. Risk Factors", "boost": 30}}})
+        should.append({"term": {"section.keyword": {"value": "Item 1A. Risk Factors", "boost": 30}}})
+        should.append({"term": {"subsection.keyword": {"value": heading_text, "boost": 60}}})
+        should.append({"match_phrase": {"subsection": {"query": heading_text, "boost": 45}}})
+        should.append({"match_phrase": {"content": {"query": heading_text, "boost": 12}}})
     if explicit_item is not None:
         should.extend(explicit_item["boosts"])
     if intent == "narrative_explainer":
@@ -513,7 +523,7 @@ def _best_item_match(chunks: list[RetrievedChunk], expected_item: str) -> bool:
 
 
 def _has_heading_subsection_overlap(question: str, chunks: list[RetrievedChunk]) -> bool:
-    normalized = _normalize_question_text(question)
+    normalized = _normalize_question_text(extract_risk_heading_reference(question) or question)
     question_tokens = set(re.findall(r"[a-z0-9]+", normalized))
     for chunk in chunks:
         subsection = (chunk.subsection or "").casefold()

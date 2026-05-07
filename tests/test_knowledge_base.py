@@ -3,13 +3,44 @@ from unittest.mock import Mock, patch
 from app.backend.knowledge_base import (
     CONSERVATIVE_FALLBACK,
     _build_sources,
+    _classify_question_intent,
     answer_question,
     generate_grounded_answer,
     retrieve_relevant_chunks,
     stream_answer_question,
 )
 from app.backend.llm_client import LLMClientError
+from app.backend.risk_headings import extract_risk_heading_reference
 from app.backend.search_client import RetrievedChunk
+
+
+def test_classify_question_intent_treats_conversational_risk_heading_as_heading_lookup() -> None:
+    assert _classify_question_intent("Can you tell me more about We Face Intense Competition") == "heading_lookup"
+    assert _classify_question_intent("Can you tell me more about Our Supplier Relationships Subject Us to a Number of Risks") == "heading_lookup"
+
+
+def test_extract_risk_heading_reference_strips_conversational_wrapper() -> None:
+    assert extract_risk_heading_reference("Can you tell me more about We Face Intense Competition") == "We Face Intense Competition"
+    assert (
+        extract_risk_heading_reference("Can you tell me more about Our Supplier Relationships Subject Us to a Number of Risks")
+        == "Our Supplier Relationships Subject Us to a Number of Risks"
+    )
+
+
+def test_generate_grounded_answer_uses_extracted_heading_for_conversational_risk_question() -> None:
+    answer = generate_grounded_answer(
+        "Can you tell me more about We Face Intense Competition",
+        [
+            _item1a_chunk(score=5.0),
+            _item1a_chunk(
+                score=4.8,
+                subsection="Intellectual Property Rights and Being Accused of Infringing",
+                content="Our digital content offerings depend in part on effective digital rights management technology.",
+            ),
+        ],
+    )
+
+    assert "I do not see **We Face Intense Competition**" in answer
 
 
 def _sample_chunk() -> RetrievedChunk:
@@ -179,11 +210,11 @@ def test_answer_question_returns_fallback_when_no_chunks(mock_retrieve: Mock) ->
     assert sources == []
 
 
-@patch("app.backend.knowledge_base.generate_grounded_answer")
+@patch("app.backend.knowledge_base.generate_chat_completion")
 @patch("app.backend.knowledge_base.retrieve_relevant_chunks")
-def test_answer_question_returns_answer_and_sources(mock_retrieve: Mock, mock_generate: Mock) -> None:
+def test_answer_question_returns_answer_and_sources(mock_retrieve: Mock, mock_generate_chat_completion: Mock) -> None:
     mock_retrieve.return_value = [_sample_chunk()]
-    mock_generate.return_value = "Amazon focuses on low prices, selection, and convenience."
+    mock_generate_chat_completion.return_value = "Amazon focuses on low prices, selection, and convenience."
 
     answer, sources = answer_question("What does the business focus on?")
 
@@ -532,7 +563,6 @@ def test_generate_grounded_answer_is_conservative_for_legal_cross_reference_only
     assert "does not include enough grounded detail" in answer.casefold()
 
 
-@patch.dict("os.environ", {"KB_ACTIVE_QUESTION": "The Loss of Key Senior Management Personnel or the Inability to Hire and Retain Qualified Personnel Could Harm Our Business"}, clear=False)
 def test_build_sources_for_heading_lookup_keeps_only_best_matching_risk_heading() -> None:
     best_match = RetrievedChunk(
         chunk_id="risk-best",
@@ -568,21 +598,22 @@ def test_build_sources_for_heading_lookup_keeps_only_best_matching_risk_heading(
         content_type="narrative",
     )
 
-    sources = _build_sources([best_match, noisy_match])
+    sources = _build_sources(
+        [best_match, noisy_match],
+        active_question="The Loss of Key Senior Management Personnel or the Inability to Hire and Retain Qualified Personnel Could Harm Our Business",
+    )
 
     assert len(sources) == 1
     assert sources[0].source_id == "risk-best"
 
 
-@patch("app.backend.knowledge_base.generate_grounded_answer_stream")
 @patch("app.backend.knowledge_base.retrieve_relevant_chunks")
-def test_stream_answer_question_returns_stream_and_sources(mock_retrieve: Mock, mock_stream: Mock) -> None:
+def test_stream_answer_question_returns_deterministic_stream_and_sources_for_numeric_lookup(mock_retrieve: Mock) -> None:
     mock_retrieve.return_value = [_table_row_chunk()]
-    mock_stream.return_value = iter(["Net sales ", "were 280,522 in 2019."])
 
     answer_stream, sources = stream_answer_question("What were net sales in 2019?")
 
-    assert "".join(answer_stream) == "Net sales were 280,522 in 2019."
+    assert "".join(answer_stream) == "Net sales in 2019 were **280,522 million USD**."
     assert sources[0].metric == "Net sales"
 
 
@@ -594,6 +625,19 @@ def test_stream_answer_question_returns_fallback_when_no_chunks(mock_retrieve: M
 
     assert "".join(answer_stream) == CONSERVATIVE_FALLBACK
     assert sources == []
+
+
+@patch("app.backend.knowledge_base.generate_grounded_answer_stream")
+@patch("app.backend.knowledge_base.retrieve_relevant_chunks")
+def test_stream_answer_question_uses_llm_stream_when_generation_is_needed(mock_retrieve: Mock, mock_stream: Mock) -> None:
+    mock_retrieve.return_value = [_sample_chunk()]
+    mock_stream.return_value = iter(["Amazon focuses ", "on low prices."])
+
+    answer_stream, sources = stream_answer_question("What does the business focus on?")
+
+    assert "".join(answer_stream) == "Amazon focuses on low prices."
+    assert len(sources) == 1
+    mock_stream.assert_called_once()
 
 
 @patch("app.backend.knowledge_base.generate_chat_completion")
@@ -658,7 +702,6 @@ def test_generate_grounded_answer_rejects_missing_specific_item1a_heading(mock_g
     assert "18-page filing extract" in answer
 
 
-@patch.dict("os.environ", {"KB_ACTIVE_QUESTION": "Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers"}, clear=False)
 def test_build_sources_omits_misleading_sources_for_missing_item1a_heading() -> None:
     sources = _build_sources(
         [
@@ -668,9 +711,28 @@ def test_build_sources_omits_misleading_sources_for_missing_item1a_heading() -> 
                 subsection="Intellectual Property Rights and Being Accused of Infringing",
                 content="Our digital content offerings depend in part on effective digital rights management technology.",
             ),
-        ]
+        ],
+        active_question="Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers",
     )
 
+    assert sources == []
+
+
+@patch("app.backend.knowledge_base.retrieve_relevant_chunks")
+def test_stream_answer_question_returns_same_missing_heading_fallback_as_blocking_path(mock_retrieve: Mock) -> None:
+    mock_retrieve.return_value = [
+        _item1a_chunk(score=5.0),
+        _item1a_chunk(
+            score=4.8,
+            subsection="Intellectual Property Rights and Being Accused of Infringing",
+            content="Our digital content offerings depend in part on effective digital rights management technology.",
+        ),
+    ]
+
+    answer_stream, sources = stream_answer_question("Can you tell me more about We Face Intense Competition")
+
+    answer = "".join(answer_stream)
+    assert "I do not see **We Face Intense Competition**" in answer
     assert sources == []
 
 

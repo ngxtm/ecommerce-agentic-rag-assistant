@@ -157,6 +157,69 @@ def test_risk_factor_refiner_splits_risks_related_heading() -> None:
     assert "cost structure" in " ".join(refined[0].lines)
 
 
+def test_risk_factor_refiner_preserves_we_face_competition_heading() -> None:
+    block = DocumentBlock(
+        part="PART I",
+        item=ITEM_1A_SECTION,
+        label=ITEM_1A_SECTION,
+        lines=[
+            NormalizedLine(10, "We Face Intense Competition", "", 0),
+            NormalizedLine(10, "Our businesses are rapidly evolving and intensely competitive.", "", 1),
+            NormalizedLine(10, "Competition continues to intensify across our businesses.", "", 2),
+        ],
+        page_start=10,
+        page_end=10,
+    )
+
+    refined = _risk_factor_refiner(block)
+
+    assert len(refined) == 1
+    assert refined[0].subsection == "We Face Intense Competition"
+    assert "rapidly evolving" in " ".join(refined[0].lines)
+
+
+def test_risk_factor_refiner_preserves_supplier_risk_heading() -> None:
+    block = DocumentBlock(
+        part="PART I",
+        item=ITEM_1A_SECTION,
+        label=ITEM_1A_SECTION,
+        lines=[
+            NormalizedLine(10, "Our Supplier Relationships Subject Us to a Number of Risks", "", 0),
+            NormalizedLine(10, "We depend on suppliers to source and deliver products and services.", "", 1),
+            NormalizedLine(10, "Supplier concentration and disruptions could affect selection, pricing, and availability.", "", 2),
+        ],
+        page_start=10,
+        page_end=10,
+    )
+
+    refined = _risk_factor_refiner(block)
+
+    assert len(refined) == 1
+    assert refined[0].subsection == "Our Supplier Relationships Subject Us to a Number of Risks"
+    assert "depend on suppliers" in " ".join(refined[0].lines)
+
+
+def test_risk_factor_refiner_augment_full_text_sections_when_line_split_misses_later_heading() -> None:
+    block = DocumentBlock(
+        part="PART I",
+        item=ITEM_1A_SECTION,
+        label=ITEM_1A_SECTION,
+        lines=[
+            NormalizedLine(10, "Intellectual Property Rights and Being Accused of Infringing", "", 0),
+            NormalizedLine(10, "Our digital content offerings depend in part on effective digital rights management technology.", "", 1),
+            NormalizedLine(10, "We Face Intense Competition Our businesses are rapidly evolving and intensely competitive, and we have many competitors across geographies.", "", 2),
+        ],
+        page_start=10,
+        page_end=10,
+    )
+
+    refined = _risk_factor_refiner(block)
+
+    subsections = {entry.subsection for entry in refined}
+    assert "Intellectual Property Rights and Being Accused of Infringing" in subsections
+    assert "We Face Intense Competition" in subsections
+
+
 def test_mda_refiner_materializes_subsections() -> None:
     block = DocumentBlock(
         part="PART II",
@@ -294,6 +357,19 @@ def test_extract_risk_sections_from_text_handles_embedded_key_personnel_heading(
     assert "We depend on our senior management" in sections[0][1]
 
 
+def test_extract_risk_sections_from_text_handles_we_face_competition_heading() -> None:
+    text = (
+        "We Face Intense Competition Our businesses are rapidly evolving and intensely competitive, and we have many competitors across geographies. "
+        "Competition continues to intensify as competitors enter new business models."
+    )
+
+    sections = _extract_risk_sections_from_text(text)
+
+    assert sections
+    assert sections[0][0] == "We Face Intense Competition"
+    assert "rapidly evolving" in sections[0][1]
+
+
 @patch("scripts.index_sample_docs._extract_pdf_metadata")
 @patch("scripts.index_sample_docs._extract_pdf_pages")
 @patch("pathlib.Path.exists")
@@ -368,6 +444,35 @@ def test_build_pdf_documents_creates_semantic_chunks(mock_exists: Mock, mock_ext
     assert any(document.section == "Item 3. Legal Proceedings" and document.content_type == "fact" for document in documents_first)
     assert any(document.section == "Item 7A. Quantitative and Qualitative Disclosures About Market Risk" and document.subsection == "Interest Rate Risk" for document in documents_first)
     assert any(document.section == "Item 8. Financial Statements and Supplementary Data" and document.content_type == "table_block" for document in documents_first)
+
+
+@patch("scripts.index_sample_docs._extract_pdf_metadata")
+@patch("scripts.index_sample_docs._extract_pdf_pages")
+@patch("pathlib.Path.exists")
+def test_build_pdf_documents_extracts_we_face_competition_subsection_from_run_on_pdf_text(
+    mock_exists: Mock,
+    mock_extract_pdf_pages: Mock,
+    mock_extract_pdf_metadata: Mock,
+) -> None:
+    path = Path("docs/company/Company-10k-18pages.pdf")
+    mock_exists.return_value = True
+    mock_extract_pdf_pages.return_value = [
+        (10, [
+            "Item 1A. Risk Factors",
+            "We Face Intense CompetitionOur businesses are rapidly evolving and intensely competitive, and we have many competitors across geographies.",
+            "Competition continues to intensify as competitors enter new business models.",
+        ]),
+    ]
+    mock_extract_pdf_metadata.return_value = ("Amazon.com, Inc.", "FORM 10-K", "December 31, 2019")
+
+    documents = _build_pdf_documents(path, "2026-05-07T00:00:00+00:00")
+
+    assert any(
+        document.section == ITEM_1A_SECTION
+        and document.subsection == "We Face Intense Competition"
+        and "rapidly evolving" in document.content
+        for document in documents
+    )
 
 
 def test_validate_documents_rejects_duplicate_metric_year_rows() -> None:

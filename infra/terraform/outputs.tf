@@ -33,6 +33,11 @@ output "docs_bucket_name" {
   value       = local.docs_bucket_name
 }
 
+output "docs_s3_prefix" {
+  description = "S3 prefix used for document ingestion uploads."
+  value       = var.docs_s3_prefix
+}
+
 output "ingestion_lambda_function_name" {
   description = "Ingestion Lambda function name."
   value       = aws_lambda_function.ingestion.function_name

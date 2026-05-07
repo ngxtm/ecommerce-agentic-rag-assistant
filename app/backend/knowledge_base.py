@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import os
 import re
+from dataclasses import dataclass
 from collections.abc import Iterator
 
 from app.backend.llm_client import LLMClientError, generate_chat_completion, generate_chat_completion_stream
 from app.backend.models import SourceItem
+from app.backend.risk_headings import extract_risk_heading_reference, question_references_risk_heading
 from app.backend.search_client import RetrievedChunk, search_chunks
 
 
@@ -101,11 +102,20 @@ ITEM_EXPECTATION_RULES = (
     ("Item 8. Financial Statements and Supplementary Data", lambda lower, keywords: bool(keywords & ITEM8_QUERY_HINTS)),
 )
 
+@dataclass(frozen=True)
+class PreparedKnowledgeAnswer:
+    question: str
+    chunks: list[RetrievedChunk]
+    sources: list[SourceItem]
+    deterministic_answer: str | None = None
+
 
 def _looks_like_risk_heading(question: str) -> bool:
     lower = question.casefold().strip()
     if not lower:
         return False
+    if question_references_risk_heading(lower):
+        return True
     if lower.startswith("risks related to "):
         return True
     return any(
@@ -198,14 +208,15 @@ def _metric_tokens(metric: str | None) -> set[str]:
 
 def _heading_specific_tokens(question: str) -> set[str]:
     generic = {"could", "harm", "business", "may", "adversely", "affect"}
-    return _extract_question_keywords(question) - generic
+    heading_text = extract_risk_heading_reference(question) or question
+    return _extract_question_keywords(heading_text) - generic
 
 
 def _heading_query_text(question: str) -> str | None:
     intent = _classify_question_intent(question)
     if intent != "heading_lookup":
         return None
-    normalized = question.strip().strip("?. ")
+    normalized = (extract_risk_heading_reference(question) or question).strip().strip("?. ")
     return normalized or None
 
 
@@ -218,7 +229,7 @@ def _best_heading_overlap(question: str, chunks: list[RetrievedChunk]) -> int:
     heading_text = _heading_query_text(question)
     if not heading_text:
         return 0
-    question_tokens = _heading_specific_tokens(question)
+    question_tokens = _heading_specific_tokens(question or "")
     best = 0
     for chunk in chunks:
         if chunk.section != "Item 1A. Risk Factors" or not chunk.subsection:
@@ -610,15 +621,7 @@ def _build_messages(question: str, context: str) -> list[dict[str, str]]:
         },
     ]
 
-
-def retrieve_relevant_chunks(question: str, top_k: int = 4) -> list[RetrievedChunk]:
-    chunks = search_chunks(question, top_k=top_k)
-    relevant_chunks = [chunk for chunk in chunks if chunk.score >= MIN_RETRIEVAL_SCORE]
-    reranked = _rerank_chunks(question, relevant_chunks)
-    return _limit_chunks_for_intent(question, reranked)
-
-
-def generate_grounded_answer(question: str, chunks: list[RetrievedChunk]) -> str:
+def _deterministic_grounded_answer(question: str, chunks: list[RetrievedChunk]) -> str | None:
     intent = _classify_question_intent(question)
     if intent == "numeric_table":
         exact_rows = [
@@ -634,12 +637,11 @@ def generate_grounded_answer(question: str, chunks: list[RetrievedChunk]) -> str
             row = exact_rows[0]
             unit = f" {row.unit}" if row.unit else ""
             return f"{row.metric} in {row.year} were **{row.value_raw}{unit}**."
-    if intent == "heading_lookup":
-        if _best_heading_overlap(question, chunks) < 4:
-            return _unsupported_item1a_heading_answer(question, chunks)
-    narrative_answer = _grounded_narrative_answer(question, chunks)
-    if narrative_answer is not None:
-        return narrative_answer
+    if intent == "heading_lookup" and _best_heading_overlap(question, chunks) < 4:
+        return _unsupported_item1a_heading_answer(question, chunks)
+    return _grounded_narrative_answer(question, chunks)
+
+def _generate_or_synthesize_grounded_answer(question: str, chunks: list[RetrievedChunk]) -> str:
     answer = generate_chat_completion(_build_messages(question, _format_context(chunks)))
     if answer and answer != CONSERVATIVE_FALLBACK:
         return answer
@@ -648,19 +650,50 @@ def generate_grounded_answer(question: str, chunks: list[RetrievedChunk]) -> str
         return synthesized_answer
     return answer or CONSERVATIVE_FALLBACK
 
+def retrieve_relevant_chunks(question: str, top_k: int = 4) -> list[RetrievedChunk]:
+    chunks = search_chunks(question, top_k=top_k)
+    relevant_chunks = [chunk for chunk in chunks if chunk.score >= MIN_RETRIEVAL_SCORE]
+    reranked = _rerank_chunks(question, relevant_chunks)
+    return _limit_chunks_for_intent(question, reranked)
+
+
+def generate_grounded_answer(question: str, chunks: list[RetrievedChunk]) -> str:
+    deterministic_answer = _deterministic_grounded_answer(question, chunks)
+    if deterministic_answer is not None:
+        return deterministic_answer
+    return _generate_or_synthesize_grounded_answer(question, chunks)
+
 
 def generate_grounded_answer_stream(question: str, chunks: list[RetrievedChunk]) -> Iterator[str]:
     yield from generate_chat_completion_stream(_build_messages(question, _format_context(chunks)))
 
 
-def stream_answer_question(question: str) -> tuple[Iterator[str], list[SourceItem]]:
-    chunks = retrieve_relevant_chunks(question)
+def _retrieval_top_k(question: str) -> int:
+    intent = _classify_question_intent(question)
+    return 8 if intent == "entity_lookup" and question.casefold().startswith("who are ") else 4
+
+
+def _prepare_knowledge_answer(question: str) -> PreparedKnowledgeAnswer:
+    chunks = retrieve_relevant_chunks(question, top_k=_retrieval_top_k(question))
     if not chunks:
-        return iter([CONSERVATIVE_FALLBACK]), []
-    return generate_grounded_answer_stream(question, chunks), _build_sources(chunks)
+        return PreparedKnowledgeAnswer(question=question, chunks=[], sources=[], deterministic_answer=CONSERVATIVE_FALLBACK)
+    deterministic_answer = _deterministic_grounded_answer(question, chunks)
+    return PreparedKnowledgeAnswer(
+        question=question,
+        chunks=chunks,
+        sources=[] if deterministic_answer == CONSERVATIVE_FALLBACK else _build_sources(chunks, active_question=question),
+        deterministic_answer=deterministic_answer,
+    )
 
 
-def _build_source_title(chunk: RetrievedChunk) -> str:
+def stream_answer_question(question: str) -> tuple[Iterator[str], list[SourceItem]]:
+    prepared = _prepare_knowledge_answer(question)
+    if not prepared.chunks or prepared.deterministic_answer is not None:
+        return iter([prepared.deterministic_answer or CONSERVATIVE_FALLBACK]), prepared.sources
+    return generate_grounded_answer_stream(question, prepared.chunks), prepared.sources
+
+
+def _build_source_title(chunk: RetrievedChunk, active_question: str | None = None) -> str:
     if chunk.content_type == "table_row" and chunk.metric and chunk.year:
         return f"{chunk.section} - {chunk.metric} ({chunk.year})"
     if chunk.content_type == "profile_row" and chunk.entity_name:
@@ -681,7 +714,7 @@ def _build_source_title(chunk: RetrievedChunk) -> str:
         return f"{chunk.title} - {chunk.section} - {chunk.subsection} - {chunk.subsubsection}"
     if chunk.subsection:
         return f"{chunk.title} - {chunk.section} - {chunk.subsection}"
-    inferred_heading = _heading_query_text(os.getenv("KB_ACTIVE_QUESTION", ""))
+    inferred_heading = _heading_query_text(active_question or "")
     if inferred_heading and chunk.section == "Item 1A. Risk Factors":
         return f"{chunk.title} - {chunk.section} - {inferred_heading}"
     if chunk.section:
@@ -689,14 +722,14 @@ def _build_source_title(chunk: RetrievedChunk) -> str:
     return chunk.title
 
 
-def _build_source_snippet(chunk: RetrievedChunk) -> str:
+def _build_source_snippet(chunk: RetrievedChunk, active_question: str | None = None) -> str:
     if chunk.content_type in {"table_row", "profile_row", "profile_bio", "fact"}:
         return chunk.content[:220]
     if chunk.subsubsection:
         return f"{chunk.subsubsection}: {chunk.content[:180]}"[:220]
     if chunk.subsection:
         return f"{chunk.subsection}: {chunk.content[:180]}"[:220]
-    inferred_heading = _heading_query_text(os.getenv("KB_ACTIVE_QUESTION", ""))
+    inferred_heading = _heading_query_text(active_question or "")
     if inferred_heading and chunk.section == "Item 1A. Risk Factors":
         return f"{inferred_heading}: {chunk.content[:180]}"[:220]
     return chunk.content[:220]
@@ -730,8 +763,8 @@ def _source_priority(chunk: RetrievedChunk) -> tuple[int, float]:
     return (content_rank.get(chunk.content_type or "", 1), chunk.score)
 
 
-def _heading_source_match_score(question: str, chunk: RetrievedChunk) -> int:
-    heading_text = _heading_query_text(question)
+def _heading_source_match_score(question: str | None, chunk: RetrievedChunk) -> int:
+    heading_text = _heading_query_text(question or "")
     if not heading_text or chunk.section != "Item 1A. Risk Factors":
         return 0
     subsection = (chunk.subsection or "").casefold()
@@ -744,8 +777,8 @@ def _heading_source_match_score(question: str, chunk: RetrievedChunk) -> int:
     return len(question_tokens & subsection_tokens)
 
 
-def _trim_source_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
-    active_question = os.getenv("KB_ACTIVE_QUESTION", "")
+def _trim_source_chunks(chunks: list[RetrievedChunk], active_question: str | None = None) -> list[RetrievedChunk]:
+    active_question = active_question or ""
     if _classify_question_intent(active_question) == "heading_lookup":
         scored_heading_chunks = [
             (chunk, _heading_source_match_score(active_question, chunk))
@@ -774,17 +807,17 @@ def _trim_source_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
     return selected
 
 
-def _build_sources(chunks: list[RetrievedChunk]) -> list[SourceItem]:
-    active_question = os.getenv("KB_ACTIVE_QUESTION", "")
+def _build_sources(chunks: list[RetrievedChunk], active_question: str | None = None) -> list[SourceItem]:
+    active_question = active_question or ""
     if _classify_question_intent(active_question) == "heading_lookup" and _best_heading_overlap(active_question, chunks) < 4:
         return []
     sources: list[SourceItem] = []
-    for chunk in _trim_source_chunks(chunks):
+    for chunk in _trim_source_chunks(chunks, active_question=active_question):
         sources.append(
             SourceItem(
                 source_id=chunk.chunk_id,
-                title=_build_source_title(chunk),
-                snippet=_build_source_snippet(chunk),
+                title=_build_source_title(chunk, active_question=active_question),
+                snippet=_build_source_snippet(chunk, active_question=active_question),
                 content_type=chunk.content_type,
                 item=chunk.item,
                 subsection=chunk.subsection,
@@ -802,18 +835,15 @@ def _build_sources(chunks: list[RetrievedChunk]) -> list[SourceItem]:
 
 def answer_question(question: str) -> tuple[str, list[SourceItem]]:
     try:
-        intent = _classify_question_intent(question)
-        retrieval_k = 8 if intent == "entity_lookup" and question.casefold().startswith("who are ") else 4
-        chunks = retrieve_relevant_chunks(question, top_k=retrieval_k)
-        if not chunks:
+        prepared = _prepare_knowledge_answer(question)
+        if not prepared.chunks:
             return CONSERVATIVE_FALLBACK, []
-
-        os.environ["KB_ACTIVE_QUESTION"] = question
-        answer = generate_grounded_answer(question, chunks)
+        if prepared.deterministic_answer is not None:
+            answer = prepared.deterministic_answer
+        else:
+            answer = _generate_or_synthesize_grounded_answer(question, prepared.chunks)
         if answer == CONSERVATIVE_FALLBACK:
             return answer, []
-        return answer, _build_sources(chunks)
+        return answer, prepared.sources
     except (ValueError, RuntimeError, LLMClientError):
         return CONSERVATIVE_FALLBACK, []
-    finally:
-        os.environ.pop("KB_ACTIVE_QUESTION", None)

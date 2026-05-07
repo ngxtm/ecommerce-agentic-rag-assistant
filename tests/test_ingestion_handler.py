@@ -4,6 +4,7 @@ from botocore.exceptions import ClientError
 
 from app.backend.ingestion_handler import (
     COMPLETED_STATUS,
+    FAILED_STATUS,
     PROCESSING_STATUS,
     S3DocumentEvent,
     _is_processing_stale,
@@ -78,6 +79,26 @@ def test_process_record_skips_active_processing(monkeypatch) -> None:
     result = _process_record(event)
 
     assert result["status"] == "skipped_processing"
+
+
+def test_process_record_marks_failed_when_download_errors(monkeypatch) -> None:
+    event = S3DocumentEvent(bucket="bucket", key="phase1-kb/doc.pdf", version_id="v1", etag="etag")
+    table = FakeTable()
+    monkeypatch.setattr("app.backend.ingestion_handler._build_state_table", lambda region_name=None: table)
+    monkeypatch.setattr(
+        "app.backend.ingestion_handler._download_s3_object",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("download boom")),
+    )
+
+    try:
+        _process_record(event)
+        assert False, "Expected download error"
+    except RuntimeError as exc:
+        assert str(exc) == "download boom"
+
+    assert table.updated is not None
+    assert table.updated["ExpressionAttributeValues"][":status"] == FAILED_STATUS
+    assert table.updated["ExpressionAttributeValues"][":error_message"] == "download boom"
 
 
 def test_handler_marks_unsupported_type_without_failing(monkeypatch) -> None:

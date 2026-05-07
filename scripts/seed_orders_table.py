@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from app.backend.aws_auth import get_boto3_session
 from app.backend.config import get_aws_region
 from app.backend.order_lookup_client import build_verified_customer_ref
 
-
-ROOT_DIR = Path(__file__).resolve().parents[1]
 ORDERS_FILE = ROOT_DIR / "data" / "mock" / "orders.json"
 
 

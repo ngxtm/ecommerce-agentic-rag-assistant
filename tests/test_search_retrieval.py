@@ -1,5 +1,6 @@
 from unittest.mock import Mock, patch
 
+from app.backend.knowledge_index_schema import INDEX_SCHEMA_VERSION
 from app.backend.knowledge_base import _rerank_chunks
 from app.backend.search_client import (
     RetrievedChunk,
@@ -55,6 +56,8 @@ def test_classify_query_intent_handles_numeric_entity_and_heading_queries() -> N
     assert _classify_query_intent("Who are the executive officers and directors?") == "entity_lookup"
     assert _classify_query_intent("The Loss of Key Senior Management Personnel Could Harm Our Business") == "heading_lookup"
     assert _classify_query_intent("Risks Related to Successfully Optimizing and Operating Our Fulfillment Network and Data Centers") == "heading_lookup"
+    assert _classify_query_intent("Can you tell me more about We Face Intense Competition") == "heading_lookup"
+    assert _classify_query_intent("Can you tell me more about Our Supplier Relationships Subject Us to a Number of Risks") == "heading_lookup"
     assert _classify_query_intent("Summarize the risk factors described in Item 1A of Amazon's filing.") == "narrative_explainer"
     assert _classify_query_intent("What facilities did Amazon operate?") == "narrative_explainer"
     assert _classify_query_intent("Market for the Registrant's Common Stock, Related Shareholder Matters, and Issuer Purchases of Equity Securities") == "narrative_explainer"
@@ -72,6 +75,26 @@ def test_build_lexical_query_boosts_subsection_for_heading_lookup() -> None:
     phrase_fields = query["query"]["bool"]["should"][1]["multi_match"]["fields"]
 
     assert "subsection^16" in phrase_fields or "subsection^12" in phrase_fields
+
+
+def test_build_lexical_query_strips_conversational_wrapper_for_heading_lookup() -> None:
+    query = _build_lexical_query("Can you tell me more about We Face Intense Competition", top_k=4)
+    expanded = query["query"]["bool"]["should"][0]["multi_match"]["query"]
+
+    assert expanded.startswith("We Face Intense Competition Item 1A Risk Factors")
+
+
+def test_build_lexical_query_adds_exact_heading_boost_for_conversational_heading_lookup() -> None:
+    query = _build_lexical_query("Can you tell me more about We Face Intense Competition", top_k=4)
+    should_clauses = query["query"]["bool"]["should"]
+
+    assert {"term": {"subsection.keyword": {"value": "We Face Intense Competition", "boost": 60}}} in should_clauses
+
+
+def test_build_lexical_query_filters_by_shared_index_schema_version() -> None:
+    query = _build_lexical_query("What does Amazon's business focus on?", top_k=4)
+
+    assert {"term": {"index_version": INDEX_SCHEMA_VERSION}} in query["query"]["bool"]["filter"]
 
 
 def test_build_lexical_query_routes_explicit_item1a_summary_to_heading_lookup() -> None:

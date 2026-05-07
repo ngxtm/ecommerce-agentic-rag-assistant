@@ -280,7 +280,7 @@ def stream_chat(request: ChatRequest, request_id: str | None = None) -> Iterator
                 "session_update_status": "committed",
             },
         )
-    except Exception:
+    except Exception as exc:
         logger.info(
             json.dumps(
                 build_log_event(
@@ -288,9 +288,37 @@ def stream_chat(request: ChatRequest, request_id: str | None = None) -> Iterator
                     request_id=request_id,
                     session_id=request.session_id,
                     partial_chars=len("".join(full_answer_parts)),
+                    error_type=type(exc).__name__,
+                    error=str(exc),
                 )
             )
         )
+        if not full_answer_parts:
+            try:
+                fallback_answer, fallback_sources = answer_question(request.message)
+                _persist_knowledge_response(request.session_id, fallback_answer, fallback_sources, session_state)
+                yield _sse_event(
+                    "final",
+                    {
+                        "full_answer": fallback_answer,
+                        "sources": [source.model_dump() if hasattr(source, "model_dump") else source for source in fallback_sources],
+                        "session_update_status": "committed",
+                        "stream_recovery": "blocking_fallback",
+                    },
+                )
+                return
+            except Exception as fallback_exc:
+                logger.info(
+                    json.dumps(
+                        build_log_event(
+                            "knowledge_stream_recovery_failed",
+                            request_id=request_id,
+                            session_id=request.session_id,
+                            error_type=type(fallback_exc).__name__,
+                            error=str(fallback_exc),
+                        )
+                    )
+                )
         yield _sse_event(
             "error",
             {

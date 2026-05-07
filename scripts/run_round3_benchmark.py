@@ -58,7 +58,7 @@ def _run_question(question: str) -> dict[str, object]:
     intent = _classify_question_intent(question)
     retrieval_k = 8 if intent == "entity_lookup" and question.casefold().startswith("who are ") else 4
     chunks = retrieve_relevant_chunks(question, top_k=retrieval_k)
-    provisional_sources = [source.model_dump() for source in _build_sources(chunks)]
+    provisional_sources = [source.model_dump() for source in _build_sources(chunks, active_question=question)]
     answer, final_sources = answer_question(question)
     return {
         "question": question,

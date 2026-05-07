@@ -34,7 +34,7 @@ def main() -> None:
     print("QUESTION:", question)
     print("INTENT:", intent)
     print("CHUNKS:", [(chunk.title, chunk.section, chunk.score) for chunk in chunks])
-    print("SOURCES:", json.dumps([source.model_dump() for source in _build_sources(chunks)], indent=2))
+    print("SOURCES:", json.dumps([source.model_dump() for source in _build_sources(chunks, active_question=question)], indent=2))
     print("MESSAGES:", json.dumps(_build_messages(question, _format_context(chunks)), indent=2))
     answer = generate_grounded_answer(question, chunks)
     print("ANSWER_FROM_CHUNKS:", answer)

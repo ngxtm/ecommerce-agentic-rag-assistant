@@ -35,7 +35,6 @@ LEGACY_MARKDOWN_DOC_IDS = (
 )
 MAX_CHUNK_CHARS = 800
 TEXT_CHUNK_PARAGRAPHS = 3
-INDEX_SCHEMA_VERSION = "v2_parser_foundation"
 PRIMARY_TABLE_SECTION = "Item 6. Selected Consolidated Financial Data"
 EXECUTIVE_OFFICERS_SECTION = "Executive Officers and Directors"
 ITEM_1A_SECTION = "Item 1A. Risk Factors"
@@ -144,6 +143,12 @@ EMBEDDED_HEADING_SPLITS = (
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from app.backend.knowledge_index_schema import INDEX_SCHEMA_VERSION
+from app.backend.risk_headings import (
+    extract_risk_sections_from_text as extract_risk_sections_from_text_shared,
+    looks_like_risk_heading as looks_like_risk_heading_shared,
+    split_embedded_risk_heading as split_embedded_risk_heading_shared,
+)
 from app.backend.search_client import _build_client
 
 
@@ -887,73 +892,15 @@ def _executive_refiner(block: DocumentBlock) -> list[RefinedBlock]:
 
 
 def _is_risk_heading(line: str) -> bool:
-    words = line.split()
-    if len(words) < 5 or len(words) > 30:
-        return False
-    if YEAR_RE.search(line):
-        return False
-    if line.endswith("."):
-        return False
-    normalized = _normalize_text_line(line)
-    lowered = normalized.casefold()
-    if lowered.startswith("risks related to "):
-        return True
-    if lowered.startswith("we are subject to ") and len(words) >= 7:
-        return True
-    lowercase_words = sum(1 for word in words if word.islower())
-    return lowercase_words >= 2 and not line.startswith("We ")
+    return looks_like_risk_heading_shared(line)
 
 
 def _split_embedded_risk_heading(line: str) -> tuple[str, str] | None:
-    normalized = _normalize_text_line(line)
-    if not normalized or len(normalized.split()) < 10:
-        return None
-    if normalized.casefold().startswith(("risks related to ", "we are subject to ", "we face risks related to ")):
-        match = re.match(
-            r"^(?P<heading>(?:Risks Related to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+|We Are Subject to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+|We Face Risks Related to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+))\s+(?P<body>(?:We|This|If) ).*$",
-            normalized,
-        )
-    else:
-        match = re.match(
-            r"^(?P<heading>(?:.+?(?:Could Harm Our Business|May Harm Our Business|May Adversely Affect Our Business|Could Adversely Affect Our Business)))\s+(?P<body>(?:Our|We|This|If) ).*$",
-            normalized,
-        )
-    if not match:
-        return None
-    heading = _normalize_text_line(match.group("heading"))
-    body = normalized[len(heading):].strip()
-    if _is_risk_heading(heading) and body:
-        return heading, body
-    return None
+    return split_embedded_risk_heading_shared(line)
 
 
 def _extract_risk_sections_from_text(text: str) -> list[tuple[str, str]]:
-    normalized = _normalize_text_line(re.sub(r"(?<=[a-z\)])(?=[A-Z])", " ", text))
-    if not normalized:
-        return []
-    sections: list[tuple[str, str]] = []
-    key_personnel_match = re.search(
-        r"(?P<heading>The Loss of Key Senior Management Personnel.*?Could (?:Harm|Negatively Affect) Our Business)\s+(?P<body>We depend on our senior management.*?)(?=(?:We Could Be Harmed by Data Loss or Other Security Breaches|We Face Risks Related to System Interruption and Lack of Redundancy|We Face Significant Inventory Risk|We Face Risks Related to Adequately Protecting Our Intellectual Property Rights)|$)",
-        normalized,
-    )
-    if key_personnel_match:
-        sections.append(
-            (
-                _normalize_text_line(key_personnel_match.group("heading")),
-                _normalize_text_line(key_personnel_match.group("body")),
-            )
-        )
-    pattern = re.compile(
-        r"(?P<heading>(?:[A-Z][A-Za-z0-9,;:'’\-()&/ ]+?(?:Could Harm Our Business|May Harm Our Business|May Adversely Affect Our Business|Could Adversely Affect Our Business)|Risks Related to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+?|We Are Subject to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+?|We Face Risks Related to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+?))\s+(?P<body>(?:Our|We|This) .*?)(?=(?:(?:[A-Z][A-Za-z0-9,;:'’\-()&/ ]+?(?:Could Harm Our Business|May Harm Our Business|May Adversely Affect Our Business|Could Adversely Affect Our Business)|Risks Related to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+?|We Are Subject to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+?|We Face Risks Related to [A-Z][A-Za-z0-9,;:'’\-()&/ ]+?))\s+(?:Our|We|This)|$)"
-    )
-    for match in pattern.finditer(normalized):
-        heading = _normalize_text_line(match.group("heading"))
-        body = _normalize_text_line(match.group("body"))
-        if heading and body:
-            candidate = (heading, body)
-            if candidate not in sections:
-                sections.append(candidate)
-    return sections
+    return extract_risk_sections_from_text_shared(text)
 
 
 def _risk_factor_refiner(block: DocumentBlock) -> list[RefinedBlock]:
@@ -992,14 +939,19 @@ def _risk_factor_refiner(block: DocumentBlock) -> list[RefinedBlock]:
             current_lines.append(normalized_line)
     if current_heading and current_lines:
         refined.append(_make_block(block, ITEM_1A_SECTION, current_heading, "narrative", [current_heading, *current_lines]))
+    full_text_sections = _extract_risk_sections_from_text(" ".join(line.text for line in block.lines))
+    if full_text_sections:
+        seen_subsections = {entry.subsection for entry in refined if entry.subsection}
+        for heading, body in full_text_sections:
+            if heading in seen_subsections:
+                continue
+            refined.append(_make_block(block, ITEM_1A_SECTION, heading, "narrative", [heading, body]))
+            seen_subsections.add(heading)
     if refined:
         return refined
     fallback = _default_item_refiner(block)
     if not fallback:
         return []
-    full_text_sections = _extract_risk_sections_from_text(" ".join(line.text for line in block.lines))
-    if full_text_sections:
-        return [_make_block(block, ITEM_1A_SECTION, heading, "narrative", [heading, body]) for heading, body in full_text_sections]
     inferred: list[RefinedBlock] = []
     for candidate in fallback:
         content = " ".join(candidate.lines)

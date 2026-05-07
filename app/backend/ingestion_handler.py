@@ -211,14 +211,14 @@ def _process_record(document_event: S3DocumentEvent, *, region_name: str | None 
             return {"source_uri": document_event.source_uri, "status": "skipped_processing"}
         raise
 
-    with tempfile.TemporaryDirectory(prefix="ingestion-") as temp_dir:
-        local_path = Path(temp_dir) / Path(document_event.key).name
-        _download_s3_object(document_event, local_path, region_name=region_name)
-        try:
+    try:
+        with tempfile.TemporaryDirectory(prefix="ingestion-") as temp_dir:
+            local_path = Path(temp_dir) / Path(document_event.key).name
+            _download_s3_object(document_event, local_path, region_name=region_name)
             indexed_doc_count = index_documents_for_paths([local_path])
-        except Exception as exc:
-            _update_status(table, document_event, FAILED_STATUS, error_message=str(exc))
-            raise
+    except Exception as exc:
+        _update_status(table, document_event, FAILED_STATUS, error_message=str(exc))
+        raise
 
     _update_status(table, document_event, COMPLETED_STATUS, indexed_doc_count=indexed_doc_count)
     return {"source_uri": document_event.source_uri, "status": COMPLETED_STATUS, "indexed_doc_count": indexed_doc_count}

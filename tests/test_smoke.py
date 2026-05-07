@@ -167,6 +167,46 @@ def test_chat_stream_returns_terminal_error_event_when_stream_fails(mock_stream_
     assert '"session_update_status": "not_committed"' in body
 
 
+@patch("app.backend.orchestrator.session_store.save")
+@patch("app.backend.orchestrator.session_store.append_message")
+@patch("app.backend.orchestrator.session_store.load")
+@patch("app.backend.orchestrator.answer_question")
+@patch("app.backend.orchestrator.stream_answer_question")
+def test_chat_stream_recovers_with_blocking_fallback_when_stream_fails_before_delta(
+    mock_stream_answer_question,
+    mock_answer_question,
+    mock_load,
+    mock_append,
+    mock_save,
+) -> None:
+    mock_load.return_value = _session_state()
+    mock_append.return_value = _session_state()
+
+    def failing_stream():
+        raise RuntimeError("boom before delta")
+        yield ""
+
+    mock_stream_answer_question.return_value = (failing_stream(), [])
+    mock_answer_question.return_value = ("Recovered blocking answer.", [])
+
+    with client.stream(
+        "POST",
+        "/chat/stream",
+        json={"session_id": "stream-session-2b", "message": "What does Amazon's business focus on?"},
+    ) as response:
+        assert response.status_code == 200
+        body = "\n".join(
+            line.decode("utf-8") if isinstance(line, bytes) else line
+            for line in response.iter_lines()
+            if line
+        )
+
+    assert "event: final" in body
+    assert '"full_answer": "Recovered blocking answer."' in body
+    assert '"stream_recovery": "blocking_fallback"' in body
+    assert "event: error" not in body
+
+
 @patch("app.backend.orchestrator.session_store.load")
 def test_chat_stream_rejects_order_status_requests(mock_load) -> None:
     mock_load.return_value = _session_state()

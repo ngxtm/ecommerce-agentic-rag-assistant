@@ -155,6 +155,13 @@ If indexing from a local machine, make sure the local IAM user or role is allowe
 - the OpenSearch Serverless data access policy
 - any required identity-based `aoss:APIAccessAll` permission
 
+When chunking logic or `INDEX_SCHEMA_VERSION` changes, always do both:
+
+- rebuild and redeploy Lambda artifact
+- reindex or reupload documents so new chunks are written with the new `index_version`
+
+Until reindex completes, retrieval will intentionally ignore older chunks that were written under the previous schema version.
+
 ## Evidence Map
 
 Deployment and verification artifacts currently live under `evidence/phase3/`.
