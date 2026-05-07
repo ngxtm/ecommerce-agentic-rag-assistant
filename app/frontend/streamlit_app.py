@@ -9,7 +9,10 @@ import httpx
 import streamlit as st
 from dotenv import load_dotenv
 
-from app.frontend.chat_state import append_history_message, commit_assistant_message, consume_post_commit_rerender
+try:
+    from app.frontend.chat_state import append_history_message, commit_assistant_message, consume_post_commit_rerender
+except ModuleNotFoundError:
+    from chat_state import append_history_message, commit_assistant_message, consume_post_commit_rerender
 
 EVENT_VERSION = 1
 STREAMING_ORDER_FALLBACK_MESSAGE = "Streaming is only available for knowledge questions."
